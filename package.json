@@ -1,0 +1,68 @@
+{
+  "name": "format-hub",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "vite & electron .",
+    "electron:build": "npm run build && electron-builder",
+    "dist": "electron-builder",
+    "build:mac-arm-dmg": "bash scripts/build-mac-arm-dmg.sh"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.6",
+    "katex": "^0.16.44",
+    "marked": "^15.0.7",
+    "mermaid": "^11.13.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.7",
+    "vite": "^5.4.19"
+  },
+  "build": {
+    "appId": "com.formathub.app",
+    "productName": "Format Hub",
+    "icon": "build/icon.png",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/main.cjs",
+      "electron/preload.cjs"
+    ],
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "Format Hub ${version}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  }
+}
