@@ -301,6 +301,16 @@ export default function App() {
     [renderedHtml, theme, codeTheme, isDarkCode, contentMaxWidth, pdfDocumentTitle]
   )
 
+  const standaloneHtml = useMemo(
+    () =>
+      buildHtmlDocument(renderedHtml, theme, codeTheme, isDarkCode, {
+        contentMaxWidth,
+        documentTitle: pdfDocumentTitle,
+        outputMode: 'standalone',
+      }),
+    [renderedHtml, theme, codeTheme, isDarkCode, contentMaxWidth, pdfDocumentTitle]
+  )
+
   const exportPdfHtml = useMemo(
     () =>
       buildHtmlDocument(renderedHtml, theme, codeTheme, isDarkCode, {
@@ -339,7 +349,11 @@ export default function App() {
   }
 
   const handleDownload = () => {
-    download('wechat-article.html', exportHtml)
+    download('wechat-article-inline.html', exportHtml)
+  }
+
+  const handleStandaloneDownload = () => {
+    download('wechat-article-readable.html', standaloneHtml)
   }
 
   const handlePdfDownload = async () => {
@@ -475,7 +489,10 @@ export default function App() {
             重置
           </button>
           <button className="button button-secondary" onClick={handleDownload}>
-            导出 HTML
+            公众号 HTML
+          </button>
+          <button className="button button-secondary" onClick={handleStandaloneDownload}>
+            阅读版 HTML
           </button>
           <button
             className="button button-secondary"
