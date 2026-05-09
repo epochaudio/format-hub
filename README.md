@@ -2,7 +2,7 @@
 
 一个简洁的 Markdown 转微信公众号排版工具。左侧写 Markdown，右侧实时预览公众号效果，一键导出 HTML / PDF。
 
-![版本](https://img.shields.io/badge/version-2.0.0-blue)
+![版本](https://img.shields.io/badge/version-2.1.0-blue)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)
 ![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite)
 

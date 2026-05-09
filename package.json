@@ -1,7 +1,7 @@
 {
   "name": "format-hub",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -45,7 +45,9 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64"]
+          "arch": [
+            "arm64"
+          ]
         }
       ]
     },
