@@ -185,6 +185,12 @@ button {
   transform: translateY(-1px);
 }
 
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+  transform: none;
+}
+
 .button-primary {
   color: #fff;
   background: linear-gradient(135deg, #c2410c 0%, #ea580c 100%);
@@ -195,6 +201,70 @@ button {
   color: #0f172a;
   background: rgba(255, 255, 255, 0.86);
   box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+}
+
+.pdf-settings-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: -8px 0 24px;
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 18px 54px rgba(15, 23, 42, 0.08);
+}
+
+.pdf-setting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+}
+
+.pdf-setting-wide {
+  grid-column: span 2;
+}
+
+.pdf-setting span {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: #475569;
+}
+
+.pdf-setting input,
+.pdf-setting select {
+  min-width: 0;
+  width: 100%;
+  border: none;
+  outline: none;
+  color: #0f172a;
+  background: transparent;
+}
+
+.pdf-setting input::placeholder {
+  color: #94a3b8;
+}
+
+.pdf-margin-grid {
+  display: grid;
+  grid-column: span 4;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pdf-margin-setting input {
+  text-align: right;
+}
+
+.pdf-setting-unit {
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 .workspace {
@@ -309,6 +379,15 @@ button {
     justify-content: flex-start;
     justify-self: stretch;
   }
+
+  .pdf-settings-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pdf-margin-grid {
+    grid-column: span 2;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -345,5 +424,14 @@ button {
 
   .article-card {
     padding: 24px 18px;
+  }
+
+  .pdf-settings-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .pdf-setting-wide,
+  .pdf-margin-grid {
+    grid-column: span 1;
   }
 }

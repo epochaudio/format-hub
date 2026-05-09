@@ -1,4 +1,5 @@
 import { codeThemes } from '../core/markdown'
+import katexCss from 'katex/dist/katex.min.css?inline'
 
 export { codeThemes }
 
@@ -1259,24 +1260,111 @@ function resolveContentMaxWidth(layoutOptions = {}) {
   return 'none'
 }
 
+function resolveDocumentTitle(layoutOptions = {}) {
+  const title = typeof layoutOptions.documentTitle === 'string' ? layoutOptions.documentTitle.trim() : ''
+  return title || '微信公众号排版'
+}
+
+function escapeHtmlText(value) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function resolvePdfFontFamily(layoutOptions = {}) {
+  const fontFamily = typeof layoutOptions.pdfFontFamily === 'string' ? layoutOptions.pdfFontFamily.trim() : ''
+  return fontFamily || '-apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif'
+}
+
+function buildPdfExportCSS(layoutOptions = {}) {
+  const fontFamily = resolvePdfFontFamily(layoutOptions)
+
+  return `
+      .wx-content {
+        font-family: ${fontFamily};
+      }
+      .wx-content pre,
+      .wx-content code {
+        font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      }
+      @media print {
+        html,
+        body {
+          background: #ffffff;
+        }
+        body {
+          margin: 0;
+          padding: 0;
+        }
+        .wx-content {
+          width: 100%;
+        }
+        .wx-content h1,
+        .wx-content h2,
+        .wx-content h3,
+        .wx-content h4,
+        .wx-content h5,
+        .wx-content h6 {
+          break-after: avoid-page;
+          page-break-after: avoid;
+        }
+        .wx-content p,
+        .wx-content li {
+          orphans: 3;
+          widows: 3;
+        }
+        .wx-content blockquote,
+        .wx-content figure,
+        .wx-content img,
+        .wx-content pre,
+        .wx-content table,
+        .wx-content .katex-display,
+        .wx-content .mermaid-chart,
+        .wx-content .toc {
+          break-inside: avoid;
+          page-break-inside: avoid;
+        }
+        .wx-content pre {
+          white-space: pre-wrap;
+          overflow: visible;
+        }
+        .wx-content table {
+          break-inside: auto;
+        }
+        .wx-content tr {
+          break-inside: avoid;
+          page-break-inside: avoid;
+        }
+      }
+    `
+}
+
 export function buildHtmlDocument(content, themeKey, codeTheme = 'github', isDark = false, layoutOptions = {}) {
   const theme = themes[themeKey]
   const contentMaxWidth = resolveContentMaxWidth(layoutOptions)
+  const documentTitle = escapeHtmlText(resolveDocumentTitle(layoutOptions))
+  const isPdfExport = layoutOptions.outputMode === 'pdf'
+  const bodyPadding = isPdfExport ? '0' : '28px 20px'
+  const pdfExportCSS = isPdfExport ? buildPdfExportCSS(layoutOptions) : ''
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>微信公众号排版</title>
+    <title>${documentTitle}</title>
     <style>
+      ${katexCss}
       body {
         margin: 0;
-        padding: 28px 20px;
+        padding: ${bodyPadding};
         background: #ffffff;
         --fh-content-max-width: ${contentMaxWidth};
       }
       ${theme.css(codeTheme, isDark)}
+      ${pdfExportCSS}
     </style>
   </head>
   <body>

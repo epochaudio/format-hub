@@ -1,7 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { buildHtmlDocument, themes, themeGroups, codeThemes } from './themes'
+import { buildHtmlDocument, themes, themeGroups } from './themes'
 import { renderMarkdown, codeThemes as codeThemeList } from './core/markdown'
 import { buildRichClipboardPayload, writeRichTextWithBrowserClipboard } from './core/clipboard'
+import {
+  DEFAULT_PDF_FONT_KEY,
+  DEFAULT_PDF_FOOTER_TEMPLATE,
+  DEFAULT_PDF_HEADER_TEMPLATE,
+  DEFAULT_PDF_MARGIN_INPUTS,
+  DEFAULT_PDF_MARGIN_MM,
+  DEFAULT_PDF_PAGE_SIZE,
+  PDF_FONT_OPTIONS,
+  PDF_MARGIN_FIELDS,
+  PDF_PAGE_SIZE_OPTIONS,
+  extractMarkdownTitle,
+  parseNonNegativeDecimalInput,
+  resolvePdfFontFamily,
+  sanitizeNonNegativeDecimalInput,
+} from './core/pdf'
 import appLogo from '../build/icon.png'
 import 'katex/dist/katex.min.css'
 
@@ -101,10 +116,38 @@ export default function App() {
   const [contentMaxWidthInput, setContentMaxWidthInput] = useState('')
   const [copyState, setCopyState] = useState('idle')
   const [renderedHtml, setRenderedHtml] = useState('')
+  const [isPdfSettingsOpen, setIsPdfSettingsOpen] = useState(false)
+  const [pdfPageSize, setPdfPageSize] = useState(DEFAULT_PDF_PAGE_SIZE)
+  const [pdfFontKey, setPdfFontKey] = useState(DEFAULT_PDF_FONT_KEY)
+  const [pdfTitleInput, setPdfTitleInput] = useState('')
+  const [pdfHeaderTemplate, setPdfHeaderTemplate] = useState(DEFAULT_PDF_HEADER_TEMPLATE)
+  const [pdfFooterTemplate, setPdfFooterTemplate] = useState(DEFAULT_PDF_FOOTER_TEMPLATE)
+  const [pdfMarginInputs, setPdfMarginInputs] = useState(DEFAULT_PDF_MARGIN_INPUTS)
+  const [pdfExportState, setPdfExportState] = useState('idle')
   const contentMaxWidth = useMemo(
     () => parseContentMaxWidth(contentMaxWidthInput),
     [contentMaxWidthInput]
   )
+  const derivedPdfTitle = useMemo(() => extractMarkdownTitle(markdown), [markdown])
+  const pdfDocumentTitle = pdfTitleInput.trim() || derivedPdfTitle
+  const pdfFontFamily = useMemo(() => resolvePdfFontFamily(pdfFontKey), [pdfFontKey])
+  const pdfMarginsMm = useMemo(
+    () => ({
+      top: parseNonNegativeDecimalInput(pdfMarginInputs.top, DEFAULT_PDF_MARGIN_MM.top),
+      right: parseNonNegativeDecimalInput(pdfMarginInputs.right, DEFAULT_PDF_MARGIN_MM.right),
+      bottom: parseNonNegativeDecimalInput(pdfMarginInputs.bottom, DEFAULT_PDF_MARGIN_MM.bottom),
+      left: parseNonNegativeDecimalInput(pdfMarginInputs.left, DEFAULT_PDF_MARGIN_MM.left),
+    }),
+    [pdfMarginInputs]
+  )
+  const pdfExportLabel =
+    pdfExportState === 'working'
+      ? '导出中...'
+      : pdfExportState === 'done'
+        ? '已导出'
+        : pdfExportState === 'error'
+          ? '导出失败'
+          : '导出 PDF'
   const contentMaxWidthLabel = contentMaxWidth ? `${contentMaxWidth}px` : '不限制'
   const previewLayoutStyle = useMemo(
     () => ({
@@ -174,9 +217,31 @@ export default function App() {
   }, [markdown, showTOC, codeTheme, isDarkCode])
 
   const exportHtml = useMemo(
-    () => buildHtmlDocument(renderedHtml, theme, codeTheme, isDarkCode, { contentMaxWidth }),
-    [renderedHtml, theme, codeTheme, isDarkCode, contentMaxWidth]
+    () =>
+      buildHtmlDocument(renderedHtml, theme, codeTheme, isDarkCode, {
+        contentMaxWidth,
+        documentTitle: pdfDocumentTitle,
+      }),
+    [renderedHtml, theme, codeTheme, isDarkCode, contentMaxWidth, pdfDocumentTitle]
   )
+
+  const exportPdfHtml = useMemo(
+    () =>
+      buildHtmlDocument(renderedHtml, theme, codeTheme, isDarkCode, {
+        contentMaxWidth,
+        documentTitle: pdfDocumentTitle,
+        outputMode: 'pdf',
+        pdfFontFamily,
+      }),
+    [renderedHtml, theme, codeTheme, isDarkCode, contentMaxWidth, pdfDocumentTitle, pdfFontFamily]
+  )
+
+  const updatePdfMarginInput = (key, value) => {
+    setPdfMarginInputs((current) => ({
+      ...current,
+      [key]: sanitizeNonNegativeDecimalInput(value),
+    }))
+  }
 
   // 复制富文本到剪贴板（可直接粘贴到公众号编辑器）
   const handleCopy = async () => {
@@ -199,6 +264,42 @@ export default function App() {
 
   const handleDownload = () => {
     download('wechat-article.html', exportHtml)
+  }
+
+  const handlePdfDownload = async () => {
+    if (!window.formatHubDesktop?.exportPdf) {
+      setPdfExportState('error')
+      window.setTimeout(() => setPdfExportState('idle'), 1600)
+      window.alert('PDF 导出需要在桌面版应用中使用。')
+      return
+    }
+
+    setPdfExportState('working')
+
+    try {
+      const result = await window.formatHubDesktop.exportPdf({
+        html: exportPdfHtml,
+        options: {
+          title: pdfDocumentTitle,
+          pageSize: pdfPageSize,
+          marginsMm: pdfMarginsMm,
+          headerTemplate: pdfHeaderTemplate,
+          footerTemplate: pdfFooterTemplate,
+        },
+      })
+
+      if (result?.canceled) {
+        setPdfExportState('idle')
+        return
+      }
+
+      setPdfExportState('done')
+      window.setTimeout(() => setPdfExportState('idle'), 1600)
+    } catch (error) {
+      setPdfExportState('error')
+      window.setTimeout(() => setPdfExportState('idle'), 1600)
+      window.alert(error?.message || 'PDF 导出失败')
+    }
   }
 
   const handleReset = () => {
@@ -291,7 +392,20 @@ export default function App() {
             重置
           </button>
           <button className="button button-secondary" onClick={handleDownload}>
-            导出
+            导出 HTML
+          </button>
+          <button
+            className="button button-secondary"
+            onClick={() => setIsPdfSettingsOpen((current) => !current)}
+          >
+            PDF 设置
+          </button>
+          <button
+            className="button button-secondary"
+            onClick={handlePdfDownload}
+            disabled={pdfExportState === 'working'}
+          >
+            {pdfExportLabel}
           </button>
           <button className="button button-primary" onClick={handleCopy}>
             {copyState === 'done'
@@ -302,6 +416,77 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {isPdfSettingsOpen && (
+        <section className="pdf-settings-panel" aria-label="PDF 设置">
+          <label className="pdf-setting pdf-setting-wide">
+            <span>标题</span>
+            <input
+              type="text"
+              value={pdfTitleInput}
+              onChange={(event) => setPdfTitleInput(event.target.value)}
+              placeholder={derivedPdfTitle}
+            />
+          </label>
+
+          <label className="pdf-setting">
+            <span>纸张</span>
+            <select value={pdfPageSize} onChange={(event) => setPdfPageSize(event.target.value)}>
+              {PDF_PAGE_SIZE_OPTIONS.map((pageSize) => (
+                <option key={pageSize.value} value={pageSize.value}>
+                  {pageSize.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="pdf-setting">
+            <span>字体</span>
+            <select value={pdfFontKey} onChange={(event) => setPdfFontKey(event.target.value)}>
+              {PDF_FONT_OPTIONS.map((font) => (
+                <option key={font.key} value={font.key}>
+                  {font.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="pdf-setting pdf-setting-wide">
+            <span>页眉</span>
+            <input
+              type="text"
+              value={pdfHeaderTemplate}
+              onChange={(event) => setPdfHeaderTemplate(event.target.value)}
+              placeholder={DEFAULT_PDF_HEADER_TEMPLATE}
+            />
+          </label>
+
+          <label className="pdf-setting pdf-setting-wide">
+            <span>页脚</span>
+            <input
+              type="text"
+              value={pdfFooterTemplate}
+              onChange={(event) => setPdfFooterTemplate(event.target.value)}
+              placeholder={DEFAULT_PDF_FOOTER_TEMPLATE}
+            />
+          </label>
+
+          <div className="pdf-margin-grid" aria-label="PDF 页边距">
+            {PDF_MARGIN_FIELDS.map((field) => (
+              <label key={field.key} className="pdf-setting pdf-margin-setting">
+                <span>{field.label}</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={pdfMarginInputs[field.key]}
+                  onChange={(event) => updatePdfMarginInput(field.key, event.target.value)}
+                />
+                <span className="pdf-setting-unit">mm</span>
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
 
       <main className="workspace">
         <section className="panel editor-panel">
