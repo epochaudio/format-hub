@@ -257,13 +257,95 @@ const classicThemes = {
   },
 }
 
-// 合并所有主题
-const allThemes = {
-  ...classicThemes,
-  ...minimalThemes,
-  ...focusThemes,
-  ...elegantThemes,
-  ...boldThemes,
+const scenarioThemes = {
+  'default-reading': {
+    label: '默认阅读',
+    accent: colors.gray.accent,
+    color: colors.gray,
+    render: (codeTheme, isDark) => generateMinimalCSS(colors.gray, codeTheme, isDark),
+  },
+  'longform-research': {
+    label: '深度长文',
+    accent: colors.blue.accent,
+    color: colors.blue,
+    render: (codeTheme, isDark) => generateElegantCSS(colors.blue, codeTheme, isDark),
+  },
+  'technical-tutorial': {
+    label: '技术教程',
+    accent: classicThemes.slate.accent,
+    color: classicThemes.slate,
+    render: (codeTheme, isDark) => generateClassicCSS('slate', codeTheme, isDark),
+  },
+  'business-brief': {
+    label: '商务简报',
+    accent: classicThemes.paper.accent,
+    color: classicThemes.paper,
+    render: (codeTheme, isDark) => generateClassicCSS('paper', codeTheme, isDark),
+  },
+  'magazine-column': {
+    label: '杂志专栏',
+    accent: classicThemes.journal.accent,
+    color: classicThemes.journal,
+    render: (codeTheme, isDark) => generateClassicCSS('journal', codeTheme, isDark),
+  },
+  'marketing-highlight': {
+    label: '重点营销',
+    accent: colors.orange.accent,
+    color: colors.orange,
+    render: (codeTheme, isDark) => generateBoldCSS(colors.orange, codeTheme, isDark),
+  },
+  'knowledge-card': {
+    label: '知识卡片',
+    accent: colors.green.accent,
+    color: colors.green,
+    render: (codeTheme, isDark) => generateElegantCSS(colors.green, codeTheme, isDark),
+  },
+  'visual-explainer': {
+    label: '视觉图解',
+    accent: colors.teal.accent,
+    color: colors.teal,
+    render: (codeTheme, isDark) => generateFocusCSS(colors.teal, codeTheme, isDark),
+  },
+}
+
+export const DEFAULT_THEME_KEY = 'default-reading'
+
+export const LEGACY_THEME_MIGRATIONS = {
+  journal: 'magazine-column',
+  slate: 'technical-tutorial',
+  paper: 'business-brief',
+  'minimal-gold': 'default-reading',
+  'minimal-green': 'knowledge-card',
+  'minimal-blue': 'default-reading',
+  'minimal-orange': 'marketing-highlight',
+  'minimal-red': 'marketing-highlight',
+  'minimal-navy': 'business-brief',
+  'minimal-gray': 'default-reading',
+  'minimal-sky': 'visual-explainer',
+  'focus-gold': 'business-brief',
+  'focus-green': 'knowledge-card',
+  'focus-blue': 'business-brief',
+  'focus-orange': 'marketing-highlight',
+  'focus-red': 'marketing-highlight',
+  'focus-navy': 'business-brief',
+  'focus-purple': 'longform-research',
+  'focus-teal': 'visual-explainer',
+  'elegant-gold': 'longform-research',
+  'elegant-purple': 'longform-research',
+  'elegant-rose': 'magazine-column',
+  'elegant-green': 'knowledge-card',
+  'elegant-blue': 'longform-research',
+  'elegant-orange': 'marketing-highlight',
+  'elegant-teal': 'visual-explainer',
+  'elegant-indigo': 'longform-research',
+  'bold-orange': 'marketing-highlight',
+  'bold-red': 'marketing-highlight',
+  'bold-purple': 'marketing-highlight',
+  'bold-blue': 'marketing-highlight',
+  'bold-green': 'marketing-highlight',
+  'bold-gold': 'marketing-highlight',
+  'bold-navy': 'business-brief',
+  'bold-teal': 'visual-explainer',
 }
 
 function buildTimelineTokenCSS({ accent, light, dark, border }) {
@@ -288,6 +370,81 @@ function buildTimelineTokenCSS({ accent, light, dark, border }) {
       color: ${dark};
     }
   `
+}
+
+function buildExpressionBlockCSS({ accent, light, dark, border }) {
+  return `
+    .wx-content .content-block {
+      margin: 24px 0;
+      padding: 16px 18px;
+      color: #374151;
+      background: #ffffff;
+      border: 1px solid ${border};
+      border-left: 4px solid ${accent};
+      border-radius: 10px;
+      box-sizing: border-box;
+    }
+    .wx-content .content-block-title {
+      margin: 0 0 10px;
+      color: ${dark};
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+    .wx-content .content-block-body > :first-child {
+      margin-top: 0;
+    }
+    .wx-content .content-block-body > :last-child {
+      margin-bottom: 0;
+    }
+    .wx-content .content-block-body p,
+    .wx-content .content-block-body li {
+      font-size: 15px;
+    }
+    .wx-content .content-block-summary {
+      background: ${light};
+      border-left-color: ${accent};
+    }
+    .wx-content .content-block-note {
+      background: #f8fafc;
+      border-color: #e2e8f0;
+      border-left-color: ${accent};
+    }
+    .wx-content .content-block-insight {
+      background: linear-gradient(135deg, ${light} 0%, #ffffff 100%);
+      border-color: ${border};
+      border-left-color: ${accent};
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+    }
+    .wx-content .content-block-risk {
+      background: #fff7ed;
+      border-color: #fed7aa;
+      border-left-color: #ea580c;
+    }
+    .wx-content .content-block-risk .content-block-title {
+      color: #9a3412;
+    }
+    .wx-content .content-block-steps ol,
+    .wx-content .content-block-faq ol,
+    .wx-content .content-block-faq ul {
+      padding-left: 22px;
+    }
+    .wx-content .content-block-steps li,
+    .wx-content .content-block-faq li {
+      margin: 8px 0;
+    }
+    .wx-content .content-block-compare table {
+      margin: 8px 0 0;
+    }
+    .wx-content .content-block-term {
+      background: #f9fafb;
+      border-style: dashed;
+    }
+  `
+}
+
+function withExpressionBlockCSS(css, color) {
+  return `${css}\n${buildExpressionBlockCSS(color)}`
 }
 
 // 生成 Minimal 系列 CSS
@@ -1183,12 +1340,22 @@ function generateClassicCSS(theme, codeTheme = 'github', isDark = false) {
 // 构建主题对象
 export const themes = {}
 
+// 场景主题（UI 仅展示这一组）
+for (const [key, config] of Object.entries(scenarioThemes)) {
+  themes[key] = {
+    label: config.label,
+    accent: config.accent,
+    css: (codeTheme, isDark) => withExpressionBlockCSS(config.render(codeTheme, isDark), config.color),
+  }
+}
+
 // Classic 系列
 for (const [key, config] of Object.entries(classicThemes)) {
   themes[key] = {
     label: config.label,
     accent: config.accent,
-    css: (codeTheme, isDark) => generateClassicCSS(key, codeTheme, isDark),
+    css: (codeTheme, isDark) =>
+      withExpressionBlockCSS(generateClassicCSS(key, codeTheme, isDark), config),
   }
 }
 
@@ -1197,7 +1364,8 @@ for (const [key, config] of Object.entries(minimalThemes)) {
   themes[key] = {
     label: config.label,
     accent: config.accent,
-    css: (codeTheme, isDark) => generateMinimalCSS(config, codeTheme, isDark),
+    css: (codeTheme, isDark) =>
+      withExpressionBlockCSS(generateMinimalCSS(config, codeTheme, isDark), config),
   }
 }
 
@@ -1206,7 +1374,8 @@ for (const [key, config] of Object.entries(focusThemes)) {
   themes[key] = {
     label: config.label,
     accent: config.accent,
-    css: (codeTheme, isDark) => generateFocusCSS(config, codeTheme, isDark),
+    css: (codeTheme, isDark) =>
+      withExpressionBlockCSS(generateFocusCSS(config, codeTheme, isDark), config),
   }
 }
 
@@ -1215,7 +1384,8 @@ for (const [key, config] of Object.entries(elegantThemes)) {
   themes[key] = {
     label: config.label,
     accent: config.accent,
-    css: (codeTheme, isDark) => generateElegantCSS(config, codeTheme, isDark),
+    css: (codeTheme, isDark) =>
+      withExpressionBlockCSS(generateElegantCSS(config, codeTheme, isDark), config),
   }
 }
 
@@ -1224,32 +1394,29 @@ for (const [key, config] of Object.entries(boldThemes)) {
   themes[key] = {
     label: config.label,
     accent: config.accent,
-    css: (codeTheme, isDark) => generateBoldCSS(config, codeTheme, isDark),
+    css: (codeTheme, isDark) =>
+      withExpressionBlockCSS(generateBoldCSS(config, codeTheme, isDark), config),
   }
 }
 
 // 主题分组（用于 UI 展示）
 export const themeGroups = {
-  classic: {
-    label: 'Classic 经典',
-    themes: Object.keys(classicThemes),
+  scenario: {
+    label: '场景主题',
+    themes: Object.keys(scenarioThemes),
   },
-  minimal: {
-    label: 'Minimal 极简',
-    themes: Object.keys(minimalThemes),
-  },
-  focus: {
-    label: 'Focus 居中',
-    themes: Object.keys(focusThemes),
-  },
-  elegant: {
-    label: 'Elegant 优雅',
-    themes: Object.keys(elegantThemes),
-  },
-  bold: {
-    label: 'Bold  bold',
-    themes: Object.keys(boldThemes),
-  },
+}
+
+export function resolveThemeKey(themeKey) {
+  if (themeKey && Object.prototype.hasOwnProperty.call(scenarioThemes, themeKey)) {
+    return themeKey
+  }
+
+  if (themeKey && LEGACY_THEME_MIGRATIONS[themeKey]) {
+    return LEGACY_THEME_MIGRATIONS[themeKey]
+  }
+
+  return DEFAULT_THEME_KEY
 }
 
 function resolveContentMaxWidth(layoutOptions = {}) {
@@ -1342,7 +1509,7 @@ function buildPdfExportCSS(layoutOptions = {}) {
 }
 
 export function buildHtmlDocument(content, themeKey, codeTheme = 'github', isDark = false, layoutOptions = {}) {
-  const theme = themes[themeKey]
+  const theme = themes[resolveThemeKey(themeKey)]
   const contentMaxWidth = resolveContentMaxWidth(layoutOptions)
   const documentTitle = escapeHtmlText(resolveDocumentTitle(layoutOptions))
   const isPdfExport = layoutOptions.outputMode === 'pdf'

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { buildHtmlDocument, themes, themeGroups } from './themes'
+import { DEFAULT_THEME_KEY, buildHtmlDocument, resolveThemeKey, themes, themeGroups } from './themes'
 import { renderMarkdown, codeThemes as codeThemeList } from './core/markdown'
 import { buildRichClipboardPayload, writeRichTextWithBrowserClipboard } from './core/clipboard'
 import {
@@ -36,11 +36,21 @@ function parseContentMaxWidth(value) {
   return parsed
 }
 
-const DEFAULT_MARKDOWN = `# 公众号标题
+const DEFAULT_MARKDOWN = `# 主题收敛之后，文章更应该会表达
 
-这是第一段正文。你可以直接把 Markdown 粘贴进来，右侧会实时生成适合公众号排版的 HTML 预览。
+:::summary
+Format Hub 会从“很多颜色主题”转向“少量场景主题 + 结构化表达组件”。主题负责气质，组件负责表达。
+:::
 
-支持 **粗体**、*斜体*、==高亮== 和 [链接](https://example.com)。
+这是第一段正文。你可以直接把 Markdown 粘贴进来，右侧会实时生成适合公众号排版的 HTML 预览。基础语法仍然支持 **粗体**、*斜体*、==高亮== 和 [链接](https://example.com)。
+
+:::insight 为什么要减少主题？
+用户选择排版时，本质上是在选择文章场景。颜色变体越多，越容易把注意力从内容结构带偏。
+:::
+
+:::note 使用建议
+先选接近文章目标的场景主题，再用摘要、洞察、风险、步骤、FAQ 等结构组件增强表达。
+:::
 
 ## 数学公式
 
@@ -86,10 +96,37 @@ console.log(result) // 55
 | 输入 | Markdown |
 | 输出 | 公众号 HTML |
 
+:::compare 主题收敛前后
+| 方向 | 旧方式 | 新方式 |
+| --- | --- | --- |
+| 主题选择 | 系列 × 颜色 | 8 个场景主题 |
+| 复杂度来源 | 皮肤数量 | 表达组件 |
+| 维护重点 | 同步多份 CSS | 强化结构语义 |
+:::
+
 ## 时序标记
 
 政策发布 → 空域规划（{{3-6月}}）→ 基建招标（{{6-12月}}）→ 飞行器采购（{{12-24月}}）<br>
 → 适航认证（{{18-36月}}）→ 运营取证（{{6-12月}}）→ 商业运营（{{持续}}）→ 利润兑现（{{24-36月滞后}}）
+
+:::risk 迁移风险
+如果历史主题键没有映射，用户打开应用时会看到陌生主题。因此需要保留旧主题到场景主题的迁移表。
+:::
+
+:::steps 后续实施节奏
+1. 先把 UI 收敛到 8 个场景主题。
+2. 再让结构化表达组件覆盖预览、复制、HTML 导出和 PDF 导出。
+3. 最后补主题样张库和独立阅读版 HTML。
+:::
+
+:::faq 常见问题
+- **旧主题会立刻删除吗？** 不会。第一阶段只收敛 UI，旧主题仍用于迁移和兼容。
+- **代码主题还保留吗？** 保留。排版主题和代码高亮主题继续独立选择。
+:::
+
+:::term 场景主题
+场景主题不是单纯的颜色方案，而是围绕文章类型设计的排版策略。
+:::
 
 > 这是引用块，适合写结论、提示和摘要。
 `
@@ -109,7 +146,7 @@ export default function App() {
     typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
   const previewContentRef = useRef(null)
   const [markdown, setMarkdown] = useState(DEFAULT_MARKDOWN)
-  const [theme, setTheme] = useState('elegant-purple')
+  const [theme, setTheme] = useState(DEFAULT_THEME_KEY)
   const [codeTheme, setCodeTheme] = useState('github')
   const [showTOC, setShowTOC] = useState(false)
   const [isDarkCode, setIsDarkCode] = useState(false)
@@ -163,7 +200,13 @@ export default function App() {
       setMarkdown(saved)
     }
     const savedTheme = window.localStorage.getItem('format-hub.theme')
-    if (savedTheme && themes[savedTheme]) setTheme(savedTheme)
+    if (savedTheme) {
+      const resolvedTheme = resolveThemeKey(savedTheme)
+      setTheme(resolvedTheme)
+      if (resolvedTheme !== savedTheme) {
+        window.localStorage.setItem('format-hub.theme', resolvedTheme)
+      }
+    }
     const savedCodeTheme = window.localStorage.getItem('format-hub.codeTheme')
     if (savedCodeTheme) setCodeTheme(savedCodeTheme)
     const savedShowTOC = window.localStorage.getItem('format-hub.showTOC')
@@ -321,6 +364,11 @@ export default function App() {
     ))
   }
 
+  const scenarioThemeCount = Object.values(themeGroups).reduce(
+    (total, group) => total + group.themes.length,
+    0
+  )
+
   return (
     <div className="app-shell">
       <header className={`topbar${isMacPlatform ? ' topbar-macos' : ''}`}>
@@ -329,7 +377,9 @@ export default function App() {
           <div className="brand-copy">
             <p className="eyebrow">Format Hub</p>
             <h1>Markdown 转公众号 HTML</h1>
-            <p className="subcopy">{Object.keys(themes).length} 种主题风格，支持数学公式、Mermaid 图表、代码高亮。</p>
+            <p className="subcopy">
+              {scenarioThemeCount} 个场景主题，支持表达组件、数学公式、Mermaid 图表、代码高亮。
+            </p>
           </div>
         </div>
 
@@ -494,7 +544,7 @@ export default function App() {
             <div>
               <h2>Markdown</h2>
               <p>
-                支持标题、列表、表格、代码块、图片、引用、数学公式、Mermaid 图表，以及
+                支持标题、列表、表格、代码块、图片、引用、表达组件、数学公式、Mermaid 图表，以及
                 <code>{'{{时间标记}}'}</code>。
               </p>
             </div>

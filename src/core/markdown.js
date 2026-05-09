@@ -22,6 +22,20 @@ const FENCED_CODE_BLOCK_PATTERN = /^[ \t]{0,3}(`{3,}|~{3,})/
 const STRONG_LABEL_INLINE_COLON_PATTERN = /^([ \t]{0,3}(?:(?:[-+*]|\d+[.)])[ \t]+)?)\*\*([^*\n]+?[：:])\*\*([ \t]*)(.*)$/
 const STRONG_LABEL_PATTERN = /^([ \t]{0,3}(?:(?:[-+*]|\d+[.)])[ \t]+)?)\*\*([^*\n]+?)\*\*([：:])([ \t]*)(.*)$/
 const TIMELINE_TOKEN_PATTERN = /\{\{([^{}\r\n]+)\}\}/g
+const EXPRESSION_BLOCK_OPEN_PATTERN = /^:::(summary|note|insight|risk|steps|compare|faq|term)(?:[ \t]+(.+?))?[ \t]*$/i
+const EXPRESSION_BLOCK_CLOSE_PATTERN = /^:::[ \t]*$/
+const EXPRESSION_BLOCK_PLACEHOLDER_PREFIX = 'FORMAT_HUB_EXPRESSION_BLOCK_'
+
+const EXPRESSION_BLOCK_TYPES = {
+  summary: { label: '摘要' },
+  note: { label: '提示' },
+  insight: { label: '洞察' },
+  risk: { label: '风险' },
+  steps: { label: '步骤' },
+  compare: { label: '对比' },
+  faq: { label: 'FAQ' },
+  term: { label: '术语' },
+}
 
 // 脚注正则
 const FOOTNOTE_REF_PATTERN = /\[\^(\w+)\]/g
@@ -64,6 +78,7 @@ const ALLOWED_TAGS = [
   'ul',
   'sup',
   'div',
+  'section',
   'span',
   'svg',
   'g',
@@ -117,6 +132,8 @@ const ALLOWED_ATTR = [
   'marker-start',
   'marker-mid',
 ]
+
+let mermaidRenderCounter = 0
 
 // 代码高亮主题
 export const codeThemes = {
@@ -357,6 +374,118 @@ function renderTimelineTokens(html) {
   return template.innerHTML
 }
 
+function escapeHtmlText(value) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function updateFenceState(line, activeFence) {
+  const fenceMatch = line.match(FENCED_CODE_BLOCK_PATTERN)
+  if (!fenceMatch) return activeFence
+
+  const marker = fenceMatch[1][0]
+  const length = fenceMatch[1].length
+
+  if (!activeFence) {
+    return { marker, length }
+  }
+
+  if (activeFence.marker === marker && length >= activeFence.length) {
+    return null
+  }
+
+  return activeFence
+}
+
+function findExpressionBlockClose(lines, startIndex) {
+  let activeFence = null
+
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    activeFence = updateFenceState(lines[index], activeFence)
+
+    if (!activeFence && EXPRESSION_BLOCK_CLOSE_PATTERN.test(lines[index])) {
+      return index
+    }
+  }
+
+  return -1
+}
+
+function extractExpressionBlocks(text) {
+  const lines = text.split(/\r?\n/)
+  const output = []
+  const blocks = []
+  let activeFence = null
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    const nextFence = updateFenceState(line, activeFence)
+    const blockMatch = !activeFence ? line.match(EXPRESSION_BLOCK_OPEN_PATTERN) : null
+
+    if (blockMatch) {
+      const closeIndex = findExpressionBlockClose(lines, index)
+
+      if (closeIndex === -1) {
+        output.push(line)
+        activeFence = nextFence
+        continue
+      }
+
+      const type = blockMatch[1].toLowerCase()
+      const title = (blockMatch[2] || '').trim()
+      const placeholder = `${EXPRESSION_BLOCK_PLACEHOLDER_PREFIX}${blocks.length}`
+
+      blocks.push({
+        type,
+        title,
+        content: lines.slice(index + 1, closeIndex).join('\n').trim(),
+        placeholder,
+      })
+      output.push(placeholder)
+      index = closeIndex
+      activeFence = null
+      continue
+    }
+
+    output.push(line)
+    activeFence = nextFence
+  }
+
+  return {
+    text: output.join('\n'),
+    blocks,
+  }
+}
+
+function buildExpressionBlockHtml(block, bodyHtml) {
+  const typeConfig = EXPRESSION_BLOCK_TYPES[block.type] || EXPRESSION_BLOCK_TYPES.note
+  const title = block.title || typeConfig.label
+  const titleHtml = title
+    ? `<div class="content-block-title">${escapeHtmlText(title)}</div>`
+    : ''
+
+  return `<section class="content-block content-block-${block.type}">${titleHtml}<div class="content-block-body">${bodyHtml}</div></section>`
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function replaceExpressionBlockPlaceholders(html, renderedBlocks) {
+  let result = html
+
+  renderedBlocks.forEach(({ placeholder, html: blockHtml }) => {
+    const escaped = escapeRegExp(placeholder)
+    result = result.replace(new RegExp(`<p>\\s*${escaped}\\s*</p>`, 'g'), blockHtml)
+    result = result.replace(new RegExp(escaped, 'g'), blockHtml)
+  })
+
+  return result
+}
+
 // 解析脚注
 function parseFootnotes(text) {
   const footnotes = {}
@@ -479,7 +608,7 @@ async function renderMermaid(text) {
   for (let i = matches.length - 1; i >= 0; i--) {
     const { full, code } = matches[i]
     try {
-      const id = `mermaid-${Date.now()}-${i}`
+      const id = `mermaid-${Date.now()}-${mermaidRenderCounter++}`
       const { svg } = await mermaid.render(id, code)
       result = result.slice(0, matches[i].index) + `\n<div class="mermaid-chart">${svg}</div>\n` + result.slice(matches[i].index + full.length)
     } catch (e) {
@@ -488,6 +617,43 @@ async function renderMermaid(text) {
   }
 
   return result
+}
+
+function applyCodeHighlight(html) {
+  return html.replace(/<pre><code(?:\s+class="language-(\w+)")?>([\s\S]*?)<\/code><\/pre>/g, (match, lang, code) => {
+    const decoded = code
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&')
+    const highlighted = highlightCode(decoded, lang || 'text')
+    return `<pre><code${lang ? ` class="language-${lang}"` : ''}>${highlighted}</code></pre>`
+  })
+}
+
+async function renderMarkdownFragment(text, { renderMermaidBlocks = true } = {}) {
+  let fragmentText = text
+
+  if (renderMermaidBlocks) {
+    fragmentText = await renderMermaid(fragmentText)
+  }
+
+  fragmentText = renderMath(fragmentText)
+
+  let html = marked.parse(fragmentText)
+  html = renderTimelineTokens(html)
+  html = applyCodeHighlight(html)
+
+  return html
+}
+
+function renderMarkdownFragmentSync(text) {
+  let fragmentText = renderMath(text)
+
+  let html = marked.parse(fragmentText)
+  html = renderTimelineTokens(html)
+  html = applyCodeHighlight(html)
+
+  return html
 }
 
 export function normalizeMarkdown(input) {
@@ -560,32 +726,28 @@ export async function renderMarkdown(input, options = {}) {
   const { text: textWithoutFootnotes, footnotes } = parseFootnotes(text)
   text = textWithoutFootnotes
 
-  // 3. 渲染 Mermaid（在 marked 之前处理）
-  text = await renderMermaid(text)
+  // 3. 抽取结构化表达组件，主体和组件内容共用同一套渲染管线
+  const { text: textWithPlaceholders, blocks } = extractExpressionBlocks(text)
 
-  // 4. 渲染数学公式
-  text = renderMath(text)
+  // 4. 渲染主体 Markdown
+  let html = await renderMarkdownFragment(textWithPlaceholders)
 
-  // 5. 渲染 Markdown
-  let html = marked.parse(text)
-
-  // 6. 渲染受控的时间标记语法
-  html = renderTimelineTokens(html)
-
-  // 7. 代码高亮
-  html = html.replace(/<pre><code(?:\s+class="language-(\w+)")?>([\s\S]*?)<\/code><\/pre>/g, (match, lang, code) => {
-    const decoded = code
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&amp;/g, '&')
-    const highlighted = highlightCode(decoded, lang || 'text')
-    return `<pre><code${lang ? ` class="language-${lang}"` : ''}>${highlighted}</code></pre>`
-  })
-
-  // 8. 渲染脚注引用
+  // 5. 渲染脚注引用
   html = renderFootnoteRefs(html, footnotes)
 
-  // 9. 生成目录
+  // 6. 渲染结构化表达组件
+  const renderedBlocks = await Promise.all(
+    blocks.map(async (block) => {
+      const bodyHtml = renderFootnoteRefs(await renderMarkdownFragment(block.content), footnotes)
+      return {
+        placeholder: block.placeholder,
+        html: buildExpressionBlockHtml(block, bodyHtml),
+      }
+    })
+  )
+  html = replaceExpressionBlockPlaceholders(html, renderedBlocks)
+
+  // 7. 生成目录
   let toc = null
   if (includeTOC) {
     toc = generateTOC(html)
@@ -595,10 +757,10 @@ export async function renderMarkdown(input, options = {}) {
     }
   }
 
-  // 10. 添加脚注列表
+  // 8. 添加脚注列表
   html += buildFootnoteList(footnotes)
 
-  // 11. 安全过滤
+  // 9. 安全过滤
   const sanitized = DOMPurify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
@@ -618,29 +780,26 @@ export function renderMarkdownSync(input, options = {}) {
   const { text: textWithoutFootnotes, footnotes } = parseFootnotes(text)
   text = textWithoutFootnotes
 
-  // 3. 渲染数学公式（跳过 Mermaid）
-  text = renderMath(text)
+  // 3. 抽取结构化表达组件
+  const { text: textWithPlaceholders, blocks } = extractExpressionBlocks(text)
 
-  // 4. 渲染 Markdown
-  let html = marked.parse(text)
+  // 4. 渲染主体 Markdown（同步版本跳过 Mermaid）
+  let html = renderMarkdownFragmentSync(textWithPlaceholders)
 
-  // 5. 渲染受控的时间标记语法
-  html = renderTimelineTokens(html)
-
-  // 6. 代码高亮
-  html = html.replace(/<pre><code(?:\s+class="language-(\w+)")?>([\s\S]*?)<\/code><\/pre>/g, (match, lang, code) => {
-    const decoded = code
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&amp;/g, '&')
-    const highlighted = highlightCode(decoded, lang || 'text')
-    return `<pre><code${lang ? ` class="language-${lang}"` : ''}>${highlighted}</code></pre>`
-  })
-
-  // 7. 渲染脚注引用
+  // 5. 渲染脚注引用
   html = renderFootnoteRefs(html, footnotes)
 
-  // 8. 生成目录
+  // 6. 渲染结构化表达组件
+  const renderedBlocks = blocks.map((block) => {
+    const bodyHtml = renderFootnoteRefs(renderMarkdownFragmentSync(block.content), footnotes)
+    return {
+      placeholder: block.placeholder,
+      html: buildExpressionBlockHtml(block, bodyHtml),
+    }
+  })
+  html = replaceExpressionBlockPlaceholders(html, renderedBlocks)
+
+  // 7. 生成目录
   let toc = null
   if (includeTOC) {
     toc = generateTOC(html)
@@ -650,10 +809,10 @@ export function renderMarkdownSync(input, options = {}) {
     }
   }
 
-  // 9. 添加脚注列表
+  // 8. 添加脚注列表
   html += buildFootnoteList(footnotes)
 
-  // 10. 安全过滤
+  // 9. 安全过滤
   const sanitized = DOMPurify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
