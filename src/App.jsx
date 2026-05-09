@@ -153,6 +153,7 @@ export default function App() {
   const [contentMaxWidthInput, setContentMaxWidthInput] = useState('')
   const [copyState, setCopyState] = useState('idle')
   const [renderedHtml, setRenderedHtml] = useState('')
+  const [isThemeGalleryOpen, setIsThemeGalleryOpen] = useState(false)
   const [isPdfSettingsOpen, setIsPdfSettingsOpen] = useState(false)
   const [pdfPageSize, setPdfPageSize] = useState(DEFAULT_PDF_PAGE_SIZE)
   const [pdfFontKey, setPdfFontKey] = useState(DEFAULT_PDF_FONT_KEY)
@@ -191,6 +192,38 @@ export default function App() {
       '--fh-content-max-width': contentMaxWidth ? `${contentMaxWidth}px` : 'none',
     }),
     [contentMaxWidth]
+  )
+  const themeKeys = useMemo(
+    () => Object.values(themeGroups).flatMap((group) => group.themes),
+    []
+  )
+  const themeGalleryItems = useMemo(
+    () => {
+      if (!isThemeGalleryOpen) return []
+
+      return themeKeys.map((themeKey) => {
+        const themeConfig = themes[themeKey]
+
+        return {
+          key: themeKey,
+          label: themeConfig?.label || themeKey,
+          accent: themeConfig?.accent || '#475569',
+          html: buildHtmlDocument(renderedHtml, themeKey, codeTheme, isDarkCode, {
+            contentMaxWidth,
+            documentTitle: `${pdfDocumentTitle} - ${themeConfig?.label || themeKey}`,
+          }),
+        }
+      })
+    },
+    [
+      isThemeGalleryOpen,
+      themeKeys,
+      renderedHtml,
+      codeTheme,
+      isDarkCode,
+      contentMaxWidth,
+      pdfDocumentTitle,
+    ]
   )
 
   // 从本地存储加载
@@ -446,6 +479,13 @@ export default function App() {
           </button>
           <button
             className="button button-secondary"
+            onClick={() => setIsThemeGalleryOpen((current) => !current)}
+            aria-expanded={isThemeGalleryOpen}
+          >
+            主题样张
+          </button>
+          <button
+            className="button button-secondary"
             onClick={() => setIsPdfSettingsOpen((current) => !current)}
           >
             PDF 设置
@@ -466,6 +506,52 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {isThemeGalleryOpen && (
+        <section className="theme-gallery-panel" aria-label="主题样张库">
+          <div className="theme-gallery-head">
+            <div>
+              <h2>主题样张</h2>
+              <p>同一篇 Markdown 在 8 个场景主题下的缩略预览，点击即可切换。</p>
+            </div>
+            <button
+              className="button button-secondary theme-gallery-close"
+              onClick={() => setIsThemeGalleryOpen(false)}
+            >
+              收起
+            </button>
+          </div>
+
+          <div className="theme-gallery-grid">
+            {themeGalleryItems.map((item) => {
+              const isSelected = item.key === theme
+
+              return (
+                <button
+                  key={item.key}
+                  className={`theme-sample${isSelected ? ' theme-sample-selected' : ''}`}
+                  style={{ '--theme-accent': item.accent }}
+                  onClick={() => setTheme(item.key)}
+                  type="button"
+                >
+                  <span className="theme-sample-head">
+                    <span>{item.label}</span>
+                    <span className="theme-sample-status">{isSelected ? '当前' : '选择'}</span>
+                  </span>
+                  <span className="theme-sample-frame">
+                    <iframe
+                      title={`${item.label} 样张`}
+                      srcDoc={item.html}
+                      sandbox=""
+                      tabIndex={-1}
+                    />
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       {isPdfSettingsOpen && (
         <section className="pdf-settings-panel" aria-label="PDF 设置">
