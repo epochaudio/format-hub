@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_THEME_KEY, buildHtmlDocument, resolveThemeKey, themes, themeGroups } from './themes'
 import { renderMarkdown, codeThemes as codeThemeList } from './core/markdown'
-import { buildRichClipboardPayload, writeRichTextWithBrowserClipboard } from './core/clipboard'
+import { writeRichTextWithBrowserClipboard } from './core/clipboard'
+import { buildWechatPayload, buildWechatDocument } from './core/wechat'
 import {
   DEFAULT_PDF_FONT_KEY,
   DEFAULT_PDF_FOOTER_TEMPLATE,
@@ -34,6 +35,22 @@ function parseContentMaxWidth(value) {
   if (!Number.isFinite(parsed) || parsed <= 0) return null
 
   return parsed
+}
+
+function readStoredSettings() {
+  try {
+    return {
+      markdown: window.localStorage.getItem(STORAGE_KEY) ?? DEFAULT_MARKDOWN,
+      theme: resolveThemeKey(window.localStorage.getItem('format-hub.theme') || DEFAULT_THEME_KEY),
+      codeTheme: window.localStorage.getItem('format-hub.codeTheme') || 'github',
+      showTOC: window.localStorage.getItem('format-hub.showTOC') === 'true',
+      isDarkCode: window.localStorage.getItem('format-hub.isDarkCode') === 'true',
+      contentMaxWidth: sanitizePositiveIntegerInput(window.localStorage.getItem(CONTENT_MAX_WIDTH_STORAGE_KEY) || ''),
+      error: '',
+    }
+  } catch {
+    return { error: '无法读取本地草稿，自动保存已暂停，请检查浏览器存储权限后重新打开。' }
+  }
 }
 
 const DEFAULT_MARKDOWN = `# 主题收敛之后，文章更应该会表达
@@ -145,14 +162,21 @@ export default function App() {
   const isMacPlatform =
     typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
   const previewContentRef = useRef(null)
-  const [markdown, setMarkdown] = useState(DEFAULT_MARKDOWN)
-  const [theme, setTheme] = useState(DEFAULT_THEME_KEY)
-  const [codeTheme, setCodeTheme] = useState('github')
-  const [showTOC, setShowTOC] = useState(false)
-  const [isDarkCode, setIsDarkCode] = useState(false)
-  const [contentMaxWidthInput, setContentMaxWidthInput] = useState('')
+  const [initialSettings] = useState(readStoredSettings)
+  const [storageError, setStorageError] = useState(initialSettings.error)
+  const [markdown, setMarkdown] = useState(initialSettings.markdown ?? DEFAULT_MARKDOWN)
+  const [theme, setTheme] = useState(initialSettings.theme ?? DEFAULT_THEME_KEY)
+  const [codeTheme, setCodeTheme] = useState(codeThemeList[initialSettings.codeTheme] ? initialSettings.codeTheme : 'github')
+  const [showTOC, setShowTOC] = useState(initialSettings.showTOC ?? false)
+  const [isDarkCode, setIsDarkCode] = useState(initialSettings.isDarkCode ?? false)
+  const [contentMaxWidthInput, setContentMaxWidthInput] = useState(initialSettings.contentMaxWidth ?? '')
   const [copyState, setCopyState] = useState('idle')
-  const [renderedHtml, setRenderedHtml] = useState('')
+  const [isWechatExporting, setIsWechatExporting] = useState(false)
+  const [wechatExportError, setWechatExportError] = useState('')
+  const [renderResult, setRenderResult] = useState({ key: null, html: '', error: '' })
+  const renderKey = JSON.stringify([markdown, showTOC, codeTheme, isDarkCode])
+  const renderedHtml = renderResult.html
+  const isRenderReady = renderResult.key === renderKey && !renderResult.error
   const [isThemeGalleryOpen, setIsThemeGalleryOpen] = useState(false)
   const [isPdfSettingsOpen, setIsPdfSettingsOpen] = useState(false)
   const [pdfPageSize, setPdfPageSize] = useState(DEFAULT_PDF_PAGE_SIZE)
@@ -226,56 +250,24 @@ export default function App() {
     ]
   )
 
-  // 从本地存储加载
+  // 状态初始化已完成读取；保存 Effect 不再与加载 Effect 竞争。
   useEffect(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY)
-    if (saved) {
-      setMarkdown(saved)
-    }
-    const savedTheme = window.localStorage.getItem('format-hub.theme')
-    if (savedTheme) {
-      const resolvedTheme = resolveThemeKey(savedTheme)
-      setTheme(resolvedTheme)
-      if (resolvedTheme !== savedTheme) {
-        window.localStorage.setItem('format-hub.theme', resolvedTheme)
+    if (initialSettings.error) return
+    try {
+      const settings = {
+        [STORAGE_KEY]: markdown,
+        'format-hub.theme': theme,
+        'format-hub.codeTheme': codeTheme,
+        'format-hub.showTOC': String(showTOC),
+        'format-hub.isDarkCode': String(isDarkCode),
+        [CONTENT_MAX_WIDTH_STORAGE_KEY]: contentMaxWidthInput,
       }
+      Object.entries(settings).forEach(([key, value]) => window.localStorage.setItem(key, value))
+      setStorageError('')
+    } catch {
+      setStorageError('自动保存失败，当前编辑内容尚未保存。请保留此窗口并备份 Markdown。')
     }
-    const savedCodeTheme = window.localStorage.getItem('format-hub.codeTheme')
-    if (savedCodeTheme) setCodeTheme(savedCodeTheme)
-    const savedShowTOC = window.localStorage.getItem('format-hub.showTOC')
-    if (savedShowTOC) setShowTOC(savedShowTOC === 'true')
-    const savedIsDark = window.localStorage.getItem('format-hub.isDarkCode')
-    if (savedIsDark) setIsDarkCode(savedIsDark === 'true')
-    const savedContentMaxWidth = window.localStorage.getItem(CONTENT_MAX_WIDTH_STORAGE_KEY)
-    if (savedContentMaxWidth) {
-      setContentMaxWidthInput(sanitizePositiveIntegerInput(savedContentMaxWidth))
-    }
-  }, [])
-
-  // 保存到本地存储
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, markdown)
-  }, [markdown])
-
-  useEffect(() => {
-    window.localStorage.setItem('format-hub.theme', theme)
-  }, [theme])
-
-  useEffect(() => {
-    window.localStorage.setItem('format-hub.codeTheme', codeTheme)
-  }, [codeTheme])
-
-  useEffect(() => {
-    window.localStorage.setItem('format-hub.showTOC', showTOC)
-  }, [showTOC])
-
-  useEffect(() => {
-    window.localStorage.setItem('format-hub.isDarkCode', isDarkCode)
-  }, [isDarkCode])
-
-  useEffect(() => {
-    window.localStorage.setItem(CONTENT_MAX_WIDTH_STORAGE_KEY, contentMaxWidthInput)
-  }, [contentMaxWidthInput])
+  }, [markdown, theme, codeTheme, showTOC, isDarkCode, contentMaxWidthInput, initialSettings])
 
   // 异步渲染 Markdown
   useEffect(() => {
@@ -285,21 +277,14 @@ export default function App() {
       codeTheme,
       darkMode: isDarkCode,
     }).then((html) => {
-      if (!cancelled) setRenderedHtml(html)
+      if (!cancelled) setRenderResult({ key: renderKey, html, error: '' })
+    }).catch(() => {
+      if (!cancelled) setRenderResult({ key: renderKey, html: '', error: '内容渲染失败，请检查 Markdown 后重试。' })
     })
     return () => {
       cancelled = true
     }
-  }, [markdown, showTOC, codeTheme, isDarkCode])
-
-  const exportHtml = useMemo(
-    () =>
-      buildHtmlDocument(renderedHtml, theme, codeTheme, isDarkCode, {
-        contentMaxWidth,
-        documentTitle: pdfDocumentTitle,
-      }),
-    [renderedHtml, theme, codeTheme, isDarkCode, contentMaxWidth, pdfDocumentTitle]
-  )
+  }, [markdown, showTOC, codeTheme, isDarkCode, renderKey])
 
   const standaloneHtml = useMemo(
     () =>
@@ -331,8 +316,11 @@ export default function App() {
 
   // 复制富文本到剪贴板（可直接粘贴到公众号编辑器）
   const handleCopy = async () => {
+    if (!isRenderReady || isWechatExporting) return
+    setIsWechatExporting(true)
+    setWechatExportError('')
     try {
-      const payload = buildRichClipboardPayload(previewContentRef.current)
+      const payload = await buildWechatPayload(previewContentRef.current)
 
       if (window.formatHubDesktop?.copyRichText) {
         await window.formatHubDesktop.copyRichText(payload)
@@ -342,21 +330,37 @@ export default function App() {
 
       setCopyState('done')
       window.setTimeout(() => setCopyState('idle'), 1600)
-    } catch {
+    } catch (error) {
+      setWechatExportError(error.message || '公众号内容生成失败。')
       setCopyState('error')
       window.setTimeout(() => setCopyState('idle'), 1600)
+    } finally {
+      setIsWechatExporting(false)
     }
   }
 
-  const handleDownload = () => {
-    download('wechat-article-inline.html', exportHtml)
+  const handleDownload = async () => {
+    if (!isRenderReady || isWechatExporting) return
+    setIsWechatExporting(true)
+    setWechatExportError('')
+    const title = pdfDocumentTitle
+    try {
+      const payload = await buildWechatPayload(previewContentRef.current)
+      download('wechat-article-inline.html', buildWechatDocument(payload, title))
+    } catch (error) {
+      setWechatExportError(error.message || '公众号内容生成失败。')
+    } finally {
+      setIsWechatExporting(false)
+    }
   }
 
   const handleStandaloneDownload = () => {
+    if (!isRenderReady) return
     download('wechat-article-readable.html', standaloneHtml)
   }
 
   const handlePdfDownload = async () => {
+    if (!isRenderReady) return
     if (!window.formatHubDesktop?.exportPdf) {
       setPdfExportState('error')
       window.setTimeout(() => setPdfExportState('idle'), 1600)
@@ -488,10 +492,10 @@ export default function App() {
           <button className="button button-secondary" onClick={handleReset}>
             重置
           </button>
-          <button className="button button-secondary" onClick={handleDownload}>
+          <button className="button button-secondary" onClick={handleDownload} disabled={!isRenderReady || isWechatExporting}>
             公众号 HTML
           </button>
-          <button className="button button-secondary" onClick={handleStandaloneDownload}>
+          <button className="button button-secondary" onClick={handleStandaloneDownload} disabled={!isRenderReady}>
             阅读版 HTML
           </button>
           <button
@@ -510,11 +514,11 @@ export default function App() {
           <button
             className="button button-secondary"
             onClick={handlePdfDownload}
-            disabled={pdfExportState === 'working'}
+            disabled={!isRenderReady || pdfExportState === 'working'}
           >
             {pdfExportLabel}
           </button>
-          <button className="button button-primary" onClick={handleCopy}>
+          <button className="button button-primary" onClick={handleCopy} disabled={!isRenderReady || isWechatExporting}>
             {copyState === 'done'
               ? '已复制'
               : copyState === 'error'
@@ -641,6 +645,11 @@ export default function App() {
         </section>
       )}
 
+      {wechatExportError && <p role="alert">{wechatExportError}</p>}
+      {isWechatExporting && <p role="status">正在准备公众号内容…</p>}
+      {storageError && <p role="alert">{storageError}</p>}
+      {renderResult.key === renderKey && renderResult.error && <p role="alert">{renderResult.error}</p>}
+      {!isRenderReady && !renderResult.error && <p role="status">正在排版，完成后可复制或导出。</p>}
       <main className="workspace">
         <section className="panel editor-panel">
           <div className="panel-head">

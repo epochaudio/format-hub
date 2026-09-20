@@ -2,7 +2,7 @@
 
 一个简洁的 Markdown 转微信公众号排版工具。左侧写 Markdown，右侧实时预览公众号效果，一键导出 HTML / PDF。
 
-![版本](https://img.shields.io/badge/version-2.1.0-blue)
+![版本](https://img.shields.io/badge/version-2.1.3-blue)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)
 ![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite)
 
@@ -192,3 +192,23 @@ src/
 ---
 
 **注意**：本项目仅供个人使用，导出的 HTML 可直接粘贴到微信公众号后台使用。
+
+## 开发与回归检查
+
+- `npm run electron:dev`：等待本机开发服务就绪后打开桌面窗口，源码修改支持热更新；退出时关闭对应服务。默认使用 5173 端口，端口占用时明确报错。
+- `npm test`：运行桌面启动检查及隔离 Electron 窗口中的浏览器回归检查，不读取个人应用草稿，也不写入系统剪贴板。
+- `npm run build`：生成生产资源；GitHub 检查会执行相同的测试与构建。
+
+回归检查覆盖草稿在 StrictMode 下的恢复、空草稿保存、代码原文保真、公式与表达组件、微信对齐值转换、独立 HTML 内嵌字体，以及渲染等待期间的导出保护。
+
+复制时会将 `text-align: start/end` 按文字方向转换成 `left/right`，保留居中及两端对齐。修改内容后，复制与导出按钮会等待当前排版完成。导出 HTML 的公式字体直接内嵌；文章引用的远程图片仍需网络访问。
+
+已安装的桌面应用不会自动使用源码修改。需要运行 `npm run build:mac-arm-dmg` 重新打包并安装，网页开发版可直接刷新使用。微信公众号后台的最终粘贴兼容性仍需实际验证。
+
+普通文字复制时使用随字号缩放的比例行高，避免编辑器调整字号后仍保留过小的固定行高；公式在公众号输出中转为高清图片，SVG 的定位样式保持原样。新增用户反馈段落在八个主题中的复制及字号调整回归检查。
+
+### 微信兼容输出（2.1.3）
+
+复制到公众号与公众号 HTML 共用转换：普通文字不输出自定义字体；文字渐变背景转为纯色；代码保留原文与高亮并支持窄屏换行；数学公式转为带白色底色的高清 PNG，避免零高度定位结构与缺失字体。阅读版 HTML 和 PDF 保留原有公式。
+
+官方校验可通过 `npm run check:wechat -- --engine <官方浏览器引擎文件> --out release/wechat-audit` 重复执行；详情、已知误报及验收边界见 [微信兼容说明](docs/wechat-compatibility.md)。此版本没有通过豁免属性隐藏告警。

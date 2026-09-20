@@ -1,14 +1,15 @@
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import katex from 'katex'
-import mermaid from 'mermaid'
-
-// 初始化 Mermaid
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'default',
-  securityLevel: 'strict',
-})
+// 仅在文章包含图表时加载 Mermaid。
+let mermaidPromise
+function loadMermaid() {
+  mermaidPromise ??= import('mermaid').then(({ default: mermaid }) => {
+    mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'strict' })
+    return mermaid
+  })
+  return mermaidPromise
+}
 
 // 配置 marked
 marked.setOptions({
@@ -17,7 +18,6 @@ marked.setOptions({
 })
 
 const FRONTMATTER_PATTERN = /^---[\t ]*\r?\n[\s\S]*?\r?\n---[\t ]*(?:\r?\n)?/
-const HIGHLIGHT_PATTERN = /==(.+?)==/g
 const FENCED_CODE_BLOCK_PATTERN = /^[ \t]{0,3}(`{3,}|~{3,})/
 const STRONG_LABEL_INLINE_COLON_PATTERN = /^([ \t]{0,3}(?:(?:[-+*]|\d+[.)])[ \t]+)?)\*\*([^*\n]+?[：:])\*\*([ \t]*)(.*)$/
 const STRONG_LABEL_PATTERN = /^([ \t]{0,3}(?:(?:[-+*]|\d+[.)])[ \t]+)?)\*\*([^*\n]+?)\*\*([：:])([ \t]*)(.*)$/
@@ -40,10 +40,6 @@ const EXPRESSION_BLOCK_TYPES = {
 // 脚注正则
 const FOOTNOTE_REF_PATTERN = /\[\^(\w+)\]/g
 const FOOTNOTE_DEF_PATTERN = /^\[\^(\w+)\]:\s*(.+)$/gm
-
-// 数学公式正则
-const INLINE_MATH_PATTERN = /\$\$(.+?)\$\$|\$([^\n$]+?)\$/g
-const BLOCK_MATH_PATTERN = /^\$\$\s*\n?([\s\S]*?)\n?\$\$$/gm
 
 // Mermaid 代码块检测
 const MERMAID_PATTERN = /^```mermaid\n([\s\S]*?)```$/gm
@@ -223,66 +219,66 @@ export const codeThemes = {
   },
 }
 
-// 简单的语法高亮
-function highlightCode(code, language) {
-  // 转义 HTML
-  let html = code
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-
-  // 定义高亮规则
-  const rules = [
-    { pattern: /(\/\/.*$|\/\*[\s\S]*?\*\/|#.*$)/gm, className: 'comment' },
-    { pattern: /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)/g, className: 'string' },
-    { pattern: /\b(const|let|var|function|class|if|else|for|while|return|import|export|from|async|await|try|catch|new|this|typeof|instanceof)\b/g, className: 'keyword' },
-    { pattern: /\b(function|class)\s+(\w+)/g, className: 'function' },
-    { pattern: /\b(\d+(?:\.\d+)?)\b/g, className: 'number' },
-    { pattern: /(\+|-|\*|\/|=|==|===|!=|!==|<|>|<=|>=|&&|\|\||!|\?|:)/g, className: 'operator' },
-  ]
-
-  // 应用高亮（简单实现，可能有边界问题）
-  rules.forEach(({ pattern, className }) => {
-    html = html.replace(pattern, (match) => {
-      // 避免重复包裹
-      if (match.startsWith('<span')) return match
-      return `<span class="${className}">${match}</span>`
-    })
-  })
-
-  return html
+// 只扫描原始代码一次，生成的 HTML 不再参与匹配。
+export function highlightCode(code) {
+  const tokenPattern = /(?<comment>\/\/[^\n]*|\/\*[\s\S]*?\*\/|#[^\n]*)|(?<string>"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(?<keyword>\b(?:const|let|var|function|class|if|else|for|while|return|import|export|from|async|await|try|catch|new|this|typeof|instanceof)\b)|(?<number>\b\d+(?:\.\d+)?\b)|(?<operator>===|!==|==|!=|<=|>=|&&|\|\||[+*/=<>!?:-])/g
+  let html = ''
+  let offset = 0
+  for (const match of code.matchAll(tokenPattern)) {
+    html += escapeHtmlText(code.slice(offset, match.index))
+    const className = Object.keys(match.groups).find((key) => match.groups[key] !== undefined)
+    html += `<span class="${className}">${escapeHtmlText(match[0])}</span>`
+    offset = match.index + match[0].length
+  }
+  return html + escapeHtmlText(code.slice(offset))
 }
 
-// 渲染数学公式
-function renderMath(text) {
-  // 块级公式 $$
-  text = text.replace(BLOCK_MATH_PATTERN, (match, formula) => {
-    try {
-      return katex.renderToString(formula.trim(), {
-        displayMode: true,
-        throwOnError: false,
-      })
-    } catch (e) {
-      return `<div style="color:red">公式错误: ${formula}</div>`
-    }
-  })
-
-  // 行内公式 $...$
-  text = text.replace(INLINE_MATH_PATTERN, (match, display, inline) => {
-    const formula = (display || inline || '').trim()
-    if (!formula) return match
-    try {
-      return katex.renderToString(formula, {
-        displayMode: false,
-        throwOnError: false,
-      })
-    } catch (e) {
-      return `<span style="color:red">$${formula}$</span>`
-    }
-  })
-
-  return text
-}
+// 扩展语法交给 Markdown 分词器处理，代码块、行内代码、链接属性不会被预替换。
+marked.use({
+  renderer: {
+    code({ text, lang }) {
+      const language = (lang || '').split(/\s+/)[0]
+      const attribute = language ? ` class="language-${escapeHtmlText(language)}"` : ''
+      return `<pre><code${attribute}>${highlightCode(text)}</code></pre>\n`
+    },
+  },
+  extensions: [
+    {
+      name: 'highlight',
+      level: 'inline',
+      start: (source) => source.indexOf('=='),
+      tokenizer(source) {
+        const match = /^==([^\n]+?)==/.exec(source)
+        if (match) return { type: 'highlight', raw: match[0], tokens: this.lexer.inlineTokens(match[1]) }
+      },
+      renderer(token) { return `<mark>${this.parser.parseInline(token.tokens)}</mark>` },
+    },
+    {
+      name: 'blockMath',
+      level: 'block',
+      start: (source) => source.match(/^\$\$/m)?.index,
+      tokenizer(source) {
+        const match = /^\$\$[ \t]*\n?([\s\S]*?)\$\$[ \t]*(?:\n|$)/.exec(source)
+        if (match) return { type: 'blockMath', raw: match[0], formula: match[1] }
+      },
+      renderer(token) {
+        return katex.renderToString(token.formula.trim(), { displayMode: true, throwOnError: false })
+      },
+    },
+    {
+      name: 'inlineMath',
+      level: 'inline',
+      start: (source) => source.indexOf('$'),
+      tokenizer(source) {
+        const match = /^\$\$([^\n]+?)\$\$|^\$([^\n$]+?)\$/.exec(source)
+        if (match) return { type: 'inlineMath', raw: match[0], formula: match[1] || match[2] }
+      },
+      renderer(token) {
+        return katex.renderToString(token.formula.trim(), { displayMode: false, throwOnError: false })
+      },
+    },
+  ],
+})
 
 function shouldSkipTimelineTokenNode(node) {
   let current = node?.parentElement || null
@@ -603,6 +599,8 @@ async function renderMermaid(text) {
 
   if (matches.length === 0) return text
 
+  const mermaid = await loadMermaid()
+
   // 渲染每个图表
   let result = text
   for (let i = matches.length - 1; i >= 0; i--) {
@@ -619,17 +617,6 @@ async function renderMermaid(text) {
   return result
 }
 
-function applyCodeHighlight(html) {
-  return html.replace(/<pre><code(?:\s+class="language-(\w+)")?>([\s\S]*?)<\/code><\/pre>/g, (match, lang, code) => {
-    const decoded = code
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&amp;/g, '&')
-    const highlighted = highlightCode(decoded, lang || 'text')
-    return `<pre><code${lang ? ` class="language-${lang}"` : ''}>${highlighted}</code></pre>`
-  })
-}
-
 async function renderMarkdownFragment(text, { renderMermaidBlocks = true } = {}) {
   let fragmentText = text
 
@@ -637,21 +624,17 @@ async function renderMarkdownFragment(text, { renderMermaidBlocks = true } = {})
     fragmentText = await renderMermaid(fragmentText)
   }
 
-  fragmentText = renderMath(fragmentText)
-
   let html = marked.parse(fragmentText)
   html = renderTimelineTokens(html)
-  html = applyCodeHighlight(html)
 
   return html
 }
 
 function renderMarkdownFragmentSync(text) {
-  let fragmentText = renderMath(text)
+  const fragmentText = text
 
   let html = marked.parse(fragmentText)
   html = renderTimelineTokens(html)
-  html = applyCodeHighlight(html)
 
   return html
 }
@@ -659,7 +642,7 @@ function renderMarkdownFragmentSync(text) {
 export function normalizeMarkdown(input) {
   const normalized = input
     .replace(FRONTMATTER_PATTERN, '')
-    .replace(HIGHLIGHT_PATTERN, '<mark>$1</mark>')
+
 
   return normalizeStrongLabelColons(normalized)
 }

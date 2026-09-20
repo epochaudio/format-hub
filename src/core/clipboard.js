@@ -1,4 +1,6 @@
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
+const FALLBACK_TEXT_LINE_HEIGHT_RATIO = 1.5
+const LINE_HEIGHT_RATIO_PRECISION = 6
 
 const INLINE_STYLE_PROPERTIES = [
   'display',
@@ -30,7 +32,6 @@ const INLINE_STYLE_PROPERTIES = [
   'box-shadow',
   'box-sizing',
   'color',
-  'font-family',
   'font-size',
   'font-style',
   'font-weight',
@@ -101,6 +102,29 @@ function appendStyleDeclaration(styleText, declaration) {
   return styleText ? `${styleText}${declaration}` : declaration
 }
 
+export function normalizeTextAlign(value, direction) {
+  const isRtl = direction === 'rtl'
+  if (value === 'start') return isRtl ? 'right' : 'left'
+  if (value === 'end') return isRtl ? 'left' : 'right'
+  if (value === '-webkit-center') return 'center'
+  if (value === '-webkit-left') return 'left'
+  if (value === '-webkit-right') return 'right'
+  if (['left', 'right', 'center', 'justify'].includes(value)) return value
+  return isRtl ? 'right' : 'left'
+}
+
+// 普通文字使用比例行高，使粘贴后的字号调整不会留下过小的固定像素行高。
+// 公式和 SVG 的行高参与精确定位，由调用方保留原值。
+export function normalizeTextLineHeight(value, fontSize) {
+  if (!value.endsWith('px')) return value
+  const lineHeightPx = Number.parseFloat(value)
+  const fontSizePx = Number.parseFloat(fontSize)
+  if (!Number.isFinite(lineHeightPx) || !Number.isFinite(fontSizePx) || fontSizePx <= 0) return value
+  const ratio = lineHeightPx / fontSizePx
+  if (ratio < 1) return String(FALLBACK_TEXT_LINE_HEIGHT_RATIO)
+  return String(Number(ratio.toFixed(LINE_HEIGHT_RATIO_PRECISION)))
+}
+
 function serializeStyles(element) {
   const computedStyle = window.getComputedStyle(element)
   const properties = shouldInlineAllStyles(element)
@@ -110,7 +134,14 @@ function serializeStyles(element) {
   const declarations = []
 
   properties.forEach((property) => {
-    const value = computedStyle.getPropertyValue(property)
+    const rawValue = computedStyle.getPropertyValue(property)
+    let value = rawValue
+    if (property === 'text-align') {
+      value = normalizeTextAlign(rawValue.trim(), computedStyle.direction)
+    } else if (property === 'line-height' && !shouldInlineAllStyles(element)) {
+      value = normalizeTextLineHeight(rawValue.trim(), computedStyle.fontSize)
+    }
+    if (property === 'font-family' && !shouldInlineAllStyles(element)) return
     if (shouldSkipStyleProperty(property, value)) return
     declarations.push(`${property}:${value};`)
   })
@@ -211,6 +242,37 @@ function normalizeListStructures(rootElement) {
   })
 }
 
+function normalizeWechatStyles(rootElement) {
+  for (const element of [rootElement, ...rootElement.querySelectorAll('*')]) {
+    if (shouldInlineAllStyles(element)) continue
+    const style = element.style
+    style.removeProperty('font-family')
+    // 以渐变的首个颜色保留主题色，避免文字背景被暗色转换算法混色。
+    if (style.backgroundImage.includes('gradient(')) {
+      const color = style.backgroundImage.match(/rgba?\([^)]+\)|#[\da-f]{3,8}/i)?.[0]
+      style.backgroundImage = 'none'
+      style.backgroundColor = color || '#ffffff'
+    }
+  }
+  // 使用普通块容器承载代码，保留空白与高亮，并允许窄屏换行。
+  for (const pre of rootElement.querySelectorAll('pre')) {
+    const block = rootElement.ownerDocument.createElement('section')
+    block.setAttribute('style', pre.getAttribute('style') || '')
+    block.setAttribute('data-code-block', '')
+    block.style.whiteSpace = 'pre-wrap'
+    block.style.overflowWrap = 'anywhere'
+    block.style.wordBreak = 'break-word'
+    block.style.overflow = 'visible'
+    block.append(...Array.from(pre.childNodes))
+    for (const child of block.querySelectorAll('*')) {
+      child.style.whiteSpace = 'inherit'
+      child.style.overflowWrap = 'inherit'
+      child.style.wordBreak = 'inherit'
+    }
+    pre.replaceWith(block)
+  }
+}
+
 export function buildRichClipboardPayload(rootElement) {
   if (!(rootElement instanceof HTMLElement || rootElement instanceof SVGElement)) {
     throw new Error('复制源节点无效')
@@ -219,6 +281,7 @@ export function buildRichClipboardPayload(rootElement) {
   const clonedRoot = rootElement.cloneNode(true)
   syncTreeWithInlineStyles(rootElement, clonedRoot)
   normalizeListStructures(clonedRoot)
+  normalizeWechatStyles(clonedRoot)
 
   return {
     html: clonedRoot.outerHTML,

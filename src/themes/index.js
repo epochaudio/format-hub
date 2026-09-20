@@ -1,5 +1,5 @@
 import { codeThemes } from '../core/markdown'
-import katexCss from 'katex/dist/katex.min.css?inline'
+import katexCss from 'virtual:format-hub-katex-css'
 
 export { codeThemes }
 
