@@ -113,6 +113,31 @@ window.testResults = (async () => {
       }
     } finally { host.remove() }
   })
+  await test('公众号公式图片使用 KaTeX 字体，而非回退字体', async () => {
+    // 行间积分号使用 KaTeX_Size2 字形：高 1.36em + 深 0.862em。回退字体绘制的积分号只有约 0.9em。
+    const KATEX_DISPLAY_INTEGRAL_HEIGHT_EM = 1.36 + 0.862
+    const INTEGRAL_HEIGHT_TOLERANCE_EM = 0.1
+    const host = document.createElement('section')
+    host.style.cssText = 'font-size:18px;line-height:1.75;width:640px;'
+    host.innerHTML = await renderMarkdown('$$\\int$$')
+    document.body.append(host)
+    try {
+      const formulaFontSize = parseFloat(getComputedStyle(host.querySelector('.katex')).fontSize)
+      const exported = parse((await buildWechatPayload(host)).html).querySelector('img')
+      const image = new Image()
+      await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = exported.src })
+      const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height
+      const context = canvas.getContext('2d'); context.drawImage(image, 0, 0)
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+      const inkRows = []
+      for (let i = 0; i < pixels.length; i += 4) if (pixels[i] < 128) inkRows.push(Math.floor(i / 4 / canvas.width))
+      assert(inkRows.length > 0, '公式图片为空白')
+      const pixelsPerCssPixel = image.width / parseFloat(exported.style.width)
+      const integralHeightEm = (inkRows[inkRows.length - 1] - inkRows[0] + 1) / pixelsPerCssPixel / formulaFontSize
+      assert(Math.abs(integralHeightEm - KATEX_DISPLAY_INTEGRAL_HEIGHT_EM) < INTEGRAL_HEIGHT_TOLERANCE_EM,
+        `积分号高 ${integralHeightEm.toFixed(2)}em，应为 KaTeX_Size2 的 ${KATEX_DISPLAY_INTEGRAL_HEIGHT_EM.toFixed(2)}em`)
+    } finally { host.remove() }
+  })
   await test('代码高亮保持原文，不嵌套破坏标签', async () => {
     const code = 'const x = 1;\nconst label = "<span>&quot;</span>"; // return 42'
     const doc = parse(await renderMarkdown('```js\n' + code + '\n```'))
@@ -166,8 +191,9 @@ window.testResults = (async () => {
     try {
       await loaded
       await frame.contentDocument.fonts.ready
-      await frame.contentDocument.fonts.load('16px KaTeX_Main')
-      assert(frame.contentDocument.fonts.check('16px KaTeX_Main'), '内嵌字体加载失败')
+      // fonts.check 对未声明的字体族也返回 true，只有 load 返回的字体列表能证明字体确实已声明并加载。
+      const loadedFaces = await frame.contentDocument.fonts.load('16px KaTeX_Main')
+      assert(loadedFaces.length > 0, '内嵌字体加载失败')
     } finally { frame.remove() }
   })
   await test('StrictMode 重挂载保留已有草稿和空草稿', async () => {
