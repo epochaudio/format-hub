@@ -177,6 +177,7 @@ export default function App() {
   const renderKey = JSON.stringify([markdown, showTOC, codeTheme, isDarkCode])
   const renderedHtml = renderResult.html
   const isRenderReady = renderResult.key === renderKey && !renderResult.error
+  const hasRenderError = renderResult.key === renderKey && Boolean(renderResult.error)
   const [isThemeGalleryOpen, setIsThemeGalleryOpen] = useState(false)
   const [isPdfSettingsOpen, setIsPdfSettingsOpen] = useState(false)
   const [pdfPageSize, setPdfPageSize] = useState(DEFAULT_PDF_PAGE_SIZE)
@@ -211,6 +212,13 @@ export default function App() {
           ? '导出失败'
           : '导出 PDF'
   const contentMaxWidthLabel = contentMaxWidth ? `${contentMaxWidth}px` : '不限制'
+  const renderStatusText = isWechatExporting
+    ? '正在准备公众号内容…'
+    : hasRenderError
+      ? '排版失败，暂不可复制或导出。'
+      : isRenderReady
+        ? '排版已就绪，可复制或导出。'
+        : '正在排版，完成后可复制或导出。'
   const previewLayoutStyle = useMemo(
     () => ({
       '--fh-content-max-width': contentMaxWidth ? `${contentMaxWidth}px` : 'none',
@@ -646,10 +654,8 @@ export default function App() {
       )}
 
       {wechatExportError && <p role="alert">{wechatExportError}</p>}
-      {isWechatExporting && <p role="status">正在准备公众号内容…</p>}
       {storageError && <p role="alert">{storageError}</p>}
-      {renderResult.key === renderKey && renderResult.error && <p role="alert">{renderResult.error}</p>}
-      {!isRenderReady && !renderResult.error && <p role="status">正在排版，完成后可复制或导出。</p>}
+      {hasRenderError && <p role="alert">{renderResult.error}</p>}
       <main className="workspace">
         <section className="panel editor-panel">
           <div className="panel-head">
@@ -678,6 +684,10 @@ export default function App() {
               <p>
                 当前主题：{themes[theme]?.label || theme} / 代码：{codeThemeList[codeTheme]?.label} /
                 正文宽度：{contentMaxWidthLabel}
+              </p>
+              {/* 常驻一行，内容变化不改变布局高度，避免打字时编辑区跳动。 */}
+              <p className="render-status" role="status" aria-live="polite">
+                {renderStatusText}
               </p>
             </div>
             <span className="theme-badge" style={{ '--theme-accent': themes[theme]?.accent }}>

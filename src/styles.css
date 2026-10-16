@@ -413,6 +413,14 @@ button {
   color: #64748b;
 }
 
+.panel-head .render-status {
+  margin-top: 2px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .editor {
   flex: 1;
   min-height: 560px;

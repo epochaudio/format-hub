@@ -1,6 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import mermaid from 'mermaid'
+import katex from 'katex'
 import { renderMarkdown, renderMarkdownSync } from '../src/core/markdown'
 import { buildRichClipboardPayload, normalizeTextAlign } from '../src/core/clipboard'
 import { buildHtmlDocument, themes, themeGroups } from '../src/themes'
@@ -137,6 +138,15 @@ window.testResults = (async () => {
     assert(doc.querySelector('.katex-display'), '块级公式显示模式错误')
     assert(html === renderMarkdownSync(input), '同步异步输出不一致')
   })
+  await test('KaTeX 可伸缩符号在过滤后保留全部属性', async () => {
+    const attributes = (root) => new Set([...root.querySelectorAll('*')].flatMap(element => [...element.attributes].map(attribute => `${element.localName}@${attribute.name}=${attribute.value}`)))
+    for (const formula of ['\\sqrt{x+1}', '\\overrightarrow{AB}', '\\widehat{xyz}', '\\xrightarrow{f}', '\\underbrace{a+b}_{n}', '\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}']) {
+      const raw = parse(katex.renderToString(formula, { displayMode: true, throwOnError: false })).querySelector('.katex-html')
+      const rendered = parse(await renderMarkdown('$$' + formula + '$$')).querySelector('.katex-html')
+      const missing = [...attributes(raw)].filter(attribute => !attributes(rendered).has(attribute) && !attribute.startsWith('svg@xmlns'))
+      assert(missing.length === 0, `${formula} 丢失属性：${missing.join(', ')}`)
+    }
+  })
   await test('微信对齐转换遵循文字方向并保留明确对齐', () => {
     for (const [value, direction, expected] of [
       ['start', 'ltr', 'left'], ['end', 'ltr', 'right'], ['start', 'rtl', 'right'], ['end', 'rtl', 'left'],
@@ -214,6 +224,28 @@ window.testResults = (async () => {
       await delay(50)
       assert(!host.querySelector('.wx-content').textContent.includes('过期'), '过期结果覆盖新内容')
       assert(exportButtons().every(button => !button.disabled), '完成后导出仍禁用')
+    } finally { mermaid.render = originalRender; root.unmount(); host.remove() }
+  })
+  await test('排版期间编辑区位置不变', async () => {
+    localStorage.setItem('format-hub.markdown', '# 布局文章')
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const originalRender = mermaid.render
+    let finish
+    mermaid.render = () => new Promise(resolve => { finish = resolve })
+    try {
+      root.render(<App />)
+      await waitFor(() => host.querySelector('.wx-content')?.textContent.includes('布局文章') && host.querySelector('.render-status')?.textContent.includes('就绪'))
+      const workspaceTop = () => host.querySelector('.workspace').getBoundingClientRect().top
+      const before = workspaceTop()
+      const textarea = host.querySelector('textarea')
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, '```mermaid\ngraph TD\nLayoutA-->LayoutB\n```')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      await waitFor(() => finish)
+      assert(host.querySelector('.render-status').textContent.includes('正在排版'), '未提示排版中')
+      assert(workspaceTop() === before, `排版提示改变了编辑区位置：${before} → ${workspaceTop()}`)
+      finish({ svg: '<svg><text>布局</text></svg>' })
     } finally { mermaid.render = originalRender; root.unmount(); host.remove() }
   })
   return results

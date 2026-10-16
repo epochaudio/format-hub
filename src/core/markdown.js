@@ -109,6 +109,8 @@ const ALLOWED_ATTR = [
   'width',
   'height',
   'viewbox',
+  // KaTeX 的根号、箭头等可伸缩符号依赖它裁切超宽 viewBox，缺失时符号缩成不可见。
+  'preserveaspectratio',
   'fill',
   'stroke',
   'stroke-width',

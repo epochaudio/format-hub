@@ -1,6 +1,8 @@
-const { app, BrowserWindow, clipboard, dialog, ipcMain } = require('electron')
+const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require('electron')
 const fs = require('fs/promises')
 const path = require('path')
+const { pathToFileURL } = require('url')
+const { isAppEntryUrl, isExternalUrl } = require('./navigation.cjs')
 
 const CLIPBOARD_CHANNEL = 'clipboard:write-rich-text'
 const PDF_EXPORT_CHANNEL = 'pdf:export'
@@ -123,7 +125,6 @@ function buildPrintToPdfOptions(options) {
     headerTemplate: buildPrintTemplate(options.headerTemplate, 'left'),
     footerTemplate: buildPrintTemplate(options.footerTemplate, 'right'),
     margins: {
-      marginType: 'custom',
       top: millimetersToInches(margins.top),
       right: millimetersToInches(margins.right),
       bottom: millimetersToInches(margins.bottom),
@@ -189,6 +190,10 @@ async function createPdfBuffer(html, options) {
     },
   })
 
+  // 导出窗口只用于打印，不跟随文档里的任何链接。
+  pdfWindow.webContents.on('will-navigate', (event) => event.preventDefault())
+  pdfWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+
   try {
     await fs.writeFile(htmlPath, html, 'utf8')
     await pdfWindow.loadFile(htmlPath)
@@ -202,6 +207,26 @@ async function createPdfBuffer(html, options) {
 
     await fs.rm(tempDirectory, { recursive: true, force: true }).catch(() => {})
   }
+}
+
+// 预览中的链接交给系统浏览器，主窗口始终停留在应用页面。
+function keepWindowOnApp(window, appEntryUrl) {
+  const openExternally = (url) => {
+    if (isExternalUrl(url)) {
+      shell.openExternal(url).catch(() => {})
+    }
+  }
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    openExternally(url)
+    return { action: 'deny' }
+  })
+
+  window.webContents.on('will-navigate', (event, url) => {
+    if (isAppEntryUrl(url, appEntryUrl)) return
+    event.preventDefault()
+    openExternally(url)
+  })
 }
 
 const createWindow = () => {
@@ -218,6 +243,10 @@ const createWindow = () => {
     titleBarStyle: 'hiddenInset',
     show: false,
   })
+
+  const appEntryUrl =
+    process.env.VITE_DEV_SERVER_URL || pathToFileURL(path.join(__dirname, '../dist/index.html')).href
+  keepWindowOnApp(mainWindow, appEntryUrl)
 
   // 加载应用
   if (process.env.VITE_DEV_SERVER_URL) {

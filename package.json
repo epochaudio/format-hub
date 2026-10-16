@@ -12,7 +12,7 @@
     "electron:build": "npm run build && electron-builder",
     "dist": "electron-builder",
     "build:mac-arm-dmg": "bash scripts/build-mac-arm-dmg.sh",
-    "test": "node --test tests/desktop.test.mjs && node scripts/run-browser-tests.mjs",
+    "test": "node --test tests/navigation.test.mjs tests/desktop.test.mjs && node scripts/run-browser-tests.mjs",
     "check:wechat": "node scripts/check-wechat.mjs"
   },
   "dependencies": {
@@ -39,6 +39,7 @@
     "files": [
       "dist/**/*",
       "electron/main.cjs",
+      "electron/navigation.cjs",
       "electron/preload.cjs"
     ],
     "mac": {
