@@ -1,30 +1,36 @@
 import DOMPurify from 'dompurify'
-import { marked } from 'marked'
+import { Marked } from 'marked'
 import katex from 'katex'
+
+// 标签使用 SVG 文本而不是 foreignObject：公众号与 PDF 都能保留，也能通过 DOMPurify 的标准 SVG 规则。
+const MERMAID_CONFIG = {
+  startOnLoad: false,
+  theme: 'default',
+  securityLevel: 'strict',
+  htmlLabels: false,
+  flowchart: { htmlLabels: false },
+}
+// Mermaid 输出不经过正文白名单，而是单独按 DOMPurify 的标准 SVG 规则过滤。
+const MERMAID_SANITIZE_OPTIONS = { USE_PROFILES: { svg: true, svgFilters: true } }
+const MERMAID_ERROR_HTML = '<div style="color:red;padding:16px;background:#fef2f2;border-radius:8px">Mermaid 渲染失败</div>'
+// 未改动的图表直接复用结果；超过上限时淘汰最早写入的图表。
+const MERMAID_CACHE_LIMIT = 50
+
 // 仅在文章包含图表时加载 Mermaid。
 let mermaidPromise
 function loadMermaid() {
   mermaidPromise ??= import('mermaid').then(({ default: mermaid }) => {
-    mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'strict' })
+    mermaid.initialize(MERMAID_CONFIG)
     return mermaid
   })
   return mermaidPromise
 }
-
-// 配置 marked
-marked.setOptions({
-  gfm: true,
-  breaks: false,
-})
 
 const FRONTMATTER_PATTERN = /^---[\t ]*\r?\n[\s\S]*?\r?\n---[\t ]*(?:\r?\n)?/
 const FENCED_CODE_BLOCK_PATTERN = /^[ \t]{0,3}(`{3,}|~{3,})/
 const STRONG_LABEL_INLINE_COLON_PATTERN = /^([ \t]{0,3}(?:(?:[-+*]|\d+[.)])[ \t]+)?)\*\*([^*\n]+?[：:])\*\*([ \t]*)(.*)$/
 const STRONG_LABEL_PATTERN = /^([ \t]{0,3}(?:(?:[-+*]|\d+[.)])[ \t]+)?)\*\*([^*\n]+?)\*\*([：:])([ \t]*)(.*)$/
 const TIMELINE_TOKEN_PATTERN = /\{\{([^{}\r\n]+)\}\}/g
-const EXPRESSION_BLOCK_OPEN_PATTERN = /^:::(summary|note|insight|risk|steps|compare|faq|term)(?:[ \t]+(.+?))?[ \t]*$/i
-const EXPRESSION_BLOCK_CLOSE_PATTERN = /^:::[ \t]*$/
-const EXPRESSION_BLOCK_PLACEHOLDER_PREFIX = 'FORMAT_HUB_EXPRESSION_BLOCK_'
 
 const EXPRESSION_BLOCK_TYPES = {
   summary: { label: '摘要' },
@@ -36,13 +42,19 @@ const EXPRESSION_BLOCK_TYPES = {
   faq: { label: 'FAQ' },
   term: { label: '术语' },
 }
+const EXPRESSION_BLOCK_TYPE_NAMES = Object.keys(EXPRESSION_BLOCK_TYPES).join('|')
+const EXPRESSION_BLOCK_OPEN_PATTERN = new RegExp(`^:::(${EXPRESSION_BLOCK_TYPE_NAMES})(?:[ \\t]+(.+?))?[ \\t]*$`, 'i')
+const EXPRESSION_BLOCK_START_PATTERN = new RegExp(`^:::(?:${EXPRESSION_BLOCK_TYPE_NAMES})(?:[ \\t]|$)`, 'im')
+const EXPRESSION_BLOCK_CLOSE_PATTERN = /^:::[ \t]*$/
 
-// 脚注正则
-const FOOTNOTE_REF_PATTERN = /\[\^(\w+)\]/g
-const FOOTNOTE_DEF_PATTERN = /^\[\^(\w+)\]:\s*(.+)$/gm
+// 脚注定义独占一行且内容非空；引用与定义共用同一 id 规则。
+const FOOTNOTE_DEFINITION_PATTERN = /^\[\^(\w+)\]:[ \t]*(\S[^\n]*)(?:\n|$)/
+const FOOTNOTE_DEFINITION_START_PATTERN = /^\[\^\w+\]:[ \t]*\S/m
+const FOOTNOTE_REFERENCE_PATTERN = /^\[\^(\w+)\]/
 
-// Mermaid 代码块检测
-const MERMAID_PATTERN = /^```mermaid\n([\s\S]*?)```$/gm
+// 开头 $ 后紧跟非空白，结尾 $ 前为非空白且其后不是数字，避免把“$5 起，$10 封顶”识别为公式。
+const INLINE_MATH_PATTERN = /^\$\$([^\n]+?)\$\$|^\$(?=\S)([^\n$]*?\S)\$(?!\d)/
+const BLOCK_MATH_PATTERN = /^\$\$[ \t]*\n?([\s\S]*?)\$\$[ \t]*(?:\n|$)/
 
 const ALLOWED_TAGS = [
   'a',
@@ -130,8 +142,6 @@ const ALLOWED_ATTR = [
   'marker-start',
   'marker-mid',
 ]
-
-let mermaidRenderCounter = 0
 
 // 代码高亮主题
 export const codeThemes = {
@@ -235,52 +245,155 @@ export function highlightCode(code) {
   return html + escapeHtmlText(code.slice(offset))
 }
 
-// 扩展语法交给 Markdown 分词器处理，代码块、行内代码、链接属性不会被预替换。
-marked.use({
-  renderer: {
-    code({ text, lang }) {
-      const language = (lang || '').split(/\s+/)[0]
-      const attribute = language ? ` class="language-${escapeHtmlText(language)}"` : ''
-      return `<pre><code${attribute}>${highlightCode(text)}</code></pre>\n`
-    },
+// 不依赖单次渲染状态的语法扩展，可在各次渲染之间共用。
+const highlightExtension = {
+  name: 'highlight',
+  level: 'inline',
+  start: (source) => source.indexOf('=='),
+  tokenizer(source) {
+    const match = /^==([^\n]+?)==/.exec(source)
+    if (match) return { type: 'highlight', raw: match[0], tokens: this.lexer.inlineTokens(match[1]) }
   },
-  extensions: [
-    {
-      name: 'highlight',
-      level: 'inline',
-      start: (source) => source.indexOf('=='),
-      tokenizer(source) {
-        const match = /^==([^\n]+?)==/.exec(source)
-        if (match) return { type: 'highlight', raw: match[0], tokens: this.lexer.inlineTokens(match[1]) }
-      },
-      renderer(token) { return `<mark>${this.parser.parseInline(token.tokens)}</mark>` },
+  renderer(token) {
+    return `<mark>${this.parser.parseInline(token.tokens)}</mark>`
+  },
+}
+
+const blockMathExtension = {
+  name: 'blockMath',
+  level: 'block',
+  start: (source) => source.match(/^\$\$/m)?.index,
+  tokenizer(source) {
+    const match = BLOCK_MATH_PATTERN.exec(source)
+    if (match) return { type: 'blockMath', raw: match[0], formula: match[1] }
+  },
+  renderer(token) {
+    return katex.renderToString(token.formula.trim(), { displayMode: true, throwOnError: false })
+  },
+}
+
+const inlineMathExtension = {
+  name: 'inlineMath',
+  level: 'inline',
+  start: (source) => source.indexOf('$'),
+  tokenizer(source) {
+    const match = INLINE_MATH_PATTERN.exec(source)
+    if (match) return { type: 'inlineMath', raw: match[0], formula: match[1] || match[2] }
+  },
+  renderer(token) {
+    return katex.renderToString(token.formula.trim(), { displayMode: false, throwOnError: false })
+  },
+}
+
+// :::类型 标题 … ::: 容器。结束行跳过代码围栏内的 :::，正文按完整 Markdown 解析。
+const expressionBlockExtension = {
+  name: 'expressionBlock',
+  level: 'block',
+  start: (source) => source.match(EXPRESSION_BLOCK_START_PATTERN)?.index,
+  tokenizer(source) {
+    const firstLineEnd = source.indexOf('\n')
+    const openMatch = (firstLineEnd === -1 ? source : source.slice(0, firstLineEnd)).match(EXPRESSION_BLOCK_OPEN_PATTERN)
+    if (!openMatch) return
+
+    const lines = source.split('\n')
+    const closeIndex = findExpressionBlockClose(lines, 0)
+    if (closeIndex === -1) return
+
+    const consumedLines = lines.slice(0, closeIndex + 1).join('\n')
+    const hasTrailingNewline = closeIndex < lines.length - 1
+
+    return {
+      type: 'expressionBlock',
+      raw: hasTrailingNewline ? `${consumedLines}\n` : consumedLines,
+      blockType: openMatch[1].toLowerCase(),
+      title: (openMatch[2] || '').trim(),
+      tokens: this.lexer.blockTokens(lines.slice(1, closeIndex).join('\n'), []),
+    }
+  },
+  renderer(token) {
+    const typeConfig = EXPRESSION_BLOCK_TYPES[token.blockType]
+    const title = token.title || typeConfig.label
+
+    return `<section class="content-block content-block-${token.blockType}"><div class="content-block-title">${escapeHtmlText(title)}</div><div class="content-block-body">${this.parser.parse(token.tokens)}</div></section>\n`
+  },
+}
+
+// 脚注编号依赖全文定义，因此扩展读写本次渲染的脚注表。
+function createFootnoteExtensions(footnotes) {
+  const definition = {
+    name: 'footnoteDefinition',
+    level: 'block',
+    start: (source) => source.match(FOOTNOTE_DEFINITION_START_PATTERN)?.index,
+    tokenizer(source) {
+      const match = FOOTNOTE_DEFINITION_PATTERN.exec(source)
+      if (match) {
+        return { type: 'footnoteDefinition', raw: match[0], id: match[1], tokens: this.lexer.inline(match[2].trim()) }
+      }
     },
-    {
-      name: 'blockMath',
-      level: 'block',
-      start: (source) => source.match(/^\$\$/m)?.index,
-      tokenizer(source) {
-        const match = /^\$\$[ \t]*\n?([\s\S]*?)\$\$[ \t]*(?:\n|$)/.exec(source)
-        if (match) return { type: 'blockMath', raw: match[0], formula: match[1] }
-      },
-      renderer(token) {
-        return katex.renderToString(token.formula.trim(), { displayMode: true, throwOnError: false })
-      },
+    // 定义不在原位置输出，渲染好的内容交给文末脚注列表。
+    renderer(token) {
+      const footnote = footnotes.get(token.id)
+      if (footnote && footnote.html === null) {
+        footnote.html = this.parser.parseInline(token.tokens)
+      }
+      return ''
     },
-    {
-      name: 'inlineMath',
-      level: 'inline',
-      start: (source) => source.indexOf('$'),
-      tokenizer(source) {
-        const match = /^\$\$([^\n]+?)\$\$|^\$([^\n$]+?)\$/.exec(source)
-        if (match) return { type: 'inlineMath', raw: match[0], formula: match[1] || match[2] }
-      },
-      renderer(token) {
-        return katex.renderToString(token.formula.trim(), { displayMode: false, throwOnError: false })
-      },
+  }
+
+  const reference = {
+    name: 'footnoteReference',
+    level: 'inline',
+    start: (source) => source.indexOf('[^'),
+    tokenizer(source) {
+      const match = FOOTNOTE_REFERENCE_PATTERN.exec(source)
+      if (match) return { type: 'footnoteReference', raw: match[0], id: match[1] }
     },
-  ],
-})
+    renderer(token) {
+      const footnote = footnotes.get(token.id)
+      if (!footnote) return escapeHtmlText(token.raw)
+      return `<sup><a href="#footnote-${token.id}" id="footnote-ref-${token.id}">[${footnote.index}]</a></sup>`
+    },
+  }
+
+  return [definition, reference]
+}
+
+// 每次渲染使用独立实例，脚注表和图表列表不会跨文章残留，也不修改全局 marked。
+function createMarkdownParser(context) {
+  return new Marked(
+    { gfm: true, breaks: false },
+    {
+      renderer: {
+        code({ text, lang }) {
+          const language = (lang || '').split(/\s+/)[0]
+          if (language === 'mermaid') {
+            const chartIndex = context.mermaidCharts.push(text.trim()) - 1
+            return `<div class="mermaid-chart" data-mermaid-chart="${chartIndex}"></div>\n`
+          }
+
+          const attribute = language ? ` class="language-${escapeHtmlText(language)}"` : ''
+          return `<pre><code${attribute}>${highlightCode(text)}</code></pre>\n`
+        },
+      },
+      extensions: [
+        highlightExtension,
+        blockMathExtension,
+        inlineMathExtension,
+        expressionBlockExtension,
+        ...createFootnoteExtensions(context.footnotes),
+      ],
+    }
+  )
+}
+
+// 先按文中定义顺序编号，渲染引用时才能写出正确序号。重复定义以第一次为准。
+function collectFootnoteDefinitions(markdownParser, tokens, footnotes) {
+  markdownParser.walkTokens(tokens, (token) => {
+    if (token.type === 'footnoteDefinition' && !footnotes.has(token.id)) {
+      footnotes.set(token.id, { id: token.id, index: footnotes.size + 1, html: null })
+    }
+  })
+}
 
 function shouldSkipTimelineTokenNode(node) {
   let current = node?.parentElement || null
@@ -412,104 +525,9 @@ function findExpressionBlockClose(lines, startIndex) {
   return -1
 }
 
-function extractExpressionBlocks(text) {
-  const lines = text.split(/\r?\n/)
-  const output = []
-  const blocks = []
-  let activeFence = null
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]
-    const nextFence = updateFenceState(line, activeFence)
-    const blockMatch = !activeFence ? line.match(EXPRESSION_BLOCK_OPEN_PATTERN) : null
-
-    if (blockMatch) {
-      const closeIndex = findExpressionBlockClose(lines, index)
-
-      if (closeIndex === -1) {
-        output.push(line)
-        activeFence = nextFence
-        continue
-      }
-
-      const type = blockMatch[1].toLowerCase()
-      const title = (blockMatch[2] || '').trim()
-      const placeholder = `${EXPRESSION_BLOCK_PLACEHOLDER_PREFIX}${blocks.length}`
-
-      blocks.push({
-        type,
-        title,
-        content: lines.slice(index + 1, closeIndex).join('\n').trim(),
-        placeholder,
-      })
-      output.push(placeholder)
-      index = closeIndex
-      activeFence = null
-      continue
-    }
-
-    output.push(line)
-    activeFence = nextFence
-  }
-
-  return {
-    text: output.join('\n'),
-    blocks,
-  }
-}
-
-function buildExpressionBlockHtml(block, bodyHtml) {
-  const typeConfig = EXPRESSION_BLOCK_TYPES[block.type] || EXPRESSION_BLOCK_TYPES.note
-  const title = block.title || typeConfig.label
-  const titleHtml = title
-    ? `<div class="content-block-title">${escapeHtmlText(title)}</div>`
-    : ''
-
-  return `<section class="content-block content-block-${block.type}">${titleHtml}<div class="content-block-body">${bodyHtml}</div></section>`
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function replaceExpressionBlockPlaceholders(html, renderedBlocks) {
-  let result = html
-
-  renderedBlocks.forEach(({ placeholder, html: blockHtml }) => {
-    const escaped = escapeRegExp(placeholder)
-    result = result.replace(new RegExp(`<p>\\s*${escaped}\\s*</p>`, 'g'), blockHtml)
-    result = result.replace(new RegExp(escaped, 'g'), blockHtml)
-  })
-
-  return result
-}
-
-// 解析脚注
-function parseFootnotes(text) {
-  const footnotes = {}
-  let idCounter = 0
-
-  // 收集脚注定义
-  text = text.replace(FOOTNOTE_DEF_PATTERN, (match, id, content) => {
-    footnotes[id] = { id, content: content.trim(), index: ++idCounter }
-    return ''
-  })
-
-  return { text, footnotes }
-}
-
-// 渲染脚注引用
-function renderFootnoteRefs(text, footnotes) {
-  return text.replace(FOOTNOTE_REF_PATTERN, (match, id) => {
-    const fn = footnotes[id]
-    if (!fn) return match
-    return `<sup><a href="#footnote-${id}" id="footnote-ref-${id}">[${fn.index}]</a></sup>`
-  })
-}
-
 // 生成脚注列表 HTML
 function buildFootnoteList(footnotes) {
-  const items = Object.values(footnotes).sort((a, b) => a.index - b.index)
+  const items = [...footnotes.values()]
   if (items.length === 0) return ''
 
   const listItems = items
@@ -517,7 +535,7 @@ function buildFootnoteList(footnotes) {
       (fn) => `
     <li id="footnote-${fn.id}">
       <span style="margin-right:8px">[${fn.index}]</span>
-      ${fn.content}
+      ${fn.html ?? ''}
       <a href="#footnote-ref-${fn.id}" style="margin-left:4px;font-size:0.85em">↩</a>
     </li>
   `
@@ -585,60 +603,51 @@ function addHeadingIds(html, headings) {
   })
 }
 
-// 处理 Mermaid 图表
-async function renderMermaid(text) {
-  const matches = []
-  let match
+let mermaidRenderCounter = 0
+const mermaidChartCache = new Map()
 
-  // 收集所有 mermaid 代码块
-  while ((match = MERMAID_PATTERN.exec(text)) !== null) {
-    matches.push({
-      full: match[0],
-      code: match[1].trim(),
-      index: match.index,
-    })
+function rememberMermaidChart(code, html) {
+  mermaidChartCache.delete(code)
+  mermaidChartCache.set(code, html)
+  if (mermaidChartCache.size > MERMAID_CACHE_LIMIT) {
+    mermaidChartCache.delete(mermaidChartCache.keys().next().value)
   }
+}
 
-  if (matches.length === 0) return text
+async function renderMermaidChart(code) {
+  if (mermaidChartCache.has(code)) {
+    const cached = mermaidChartCache.get(code)
+    rememberMermaidChart(code, cached)
+    return cached
+  }
 
   const mermaid = await loadMermaid()
-
-  // 渲染每个图表
-  let result = text
-  for (let i = matches.length - 1; i >= 0; i--) {
-    const { full, code } = matches[i]
-    try {
-      const id = `mermaid-${Date.now()}-${mermaidRenderCounter++}`
-      const { svg } = await mermaid.render(id, code)
-      result = result.slice(0, matches[i].index) + `\n<div class="mermaid-chart">${svg}</div>\n` + result.slice(matches[i].index + full.length)
-    } catch (e) {
-      result = result.slice(0, matches[i].index) + `<div style="color:red;padding:16px;background:#fef2f2;border-radius:8px">Mermaid 渲染失败</div>` + result.slice(matches[i].index + full.length)
-    }
+  let html
+  try {
+    const { svg } = await mermaid.render(`format-hub-mermaid-${mermaidRenderCounter++}`, code)
+    html = DOMPurify.sanitize(svg, MERMAID_SANITIZE_OPTIONS)
+  } catch {
+    html = MERMAID_ERROR_HTML
   }
 
-  return result
-}
-
-async function renderMarkdownFragment(text, { renderMermaidBlocks = true } = {}) {
-  let fragmentText = text
-
-  if (renderMermaidBlocks) {
-    fragmentText = await renderMermaid(fragmentText)
-  }
-
-  let html = marked.parse(fragmentText)
-  html = renderTimelineTokens(html)
-
+  rememberMermaidChart(code, html)
   return html
 }
 
-function renderMarkdownFragmentSync(text) {
-  const fragmentText = text
+// 正文过滤之后再填入图表，图表只走 SVG 过滤规则，不受正文白名单影响。
+async function injectMermaidCharts(html, charts) {
+  if (charts.length === 0) return html
 
-  let html = marked.parse(fragmentText)
-  html = renderTimelineTokens(html)
+  const template = document.createElement('template')
+  template.innerHTML = html
 
-  return html
+  for (const placeholder of template.content.querySelectorAll('[data-mermaid-chart]')) {
+    const code = charts[Number(placeholder.getAttribute('data-mermaid-chart'))]
+    placeholder.removeAttribute('data-mermaid-chart')
+    placeholder.innerHTML = code === undefined ? '' : await renderMermaidChart(code)
+  }
+
+  return template.innerHTML
 }
 
 export function normalizeMarkdown(input) {
@@ -701,107 +710,34 @@ function normalizeStrongLabelColons(text) {
 }
 
 // 主渲染函数
-export async function renderMarkdown(input, options = {}) {
-  const { includeTOC = false, codeTheme = 'github', darkMode = false } = options
+export async function renderMarkdown(input, { includeTOC = false } = {}) {
+  const context = { footnotes: new Map(), mermaidCharts: [] }
+  const markdownParser = createMarkdownParser(context)
 
-  // 1. 预处理 Markdown
-  let text = normalizeMarkdown(input)
+  // 1. 预处理后分词，脚注、表达组件、图表和公式都在分词阶段识别，代码内容不会被误改
+  const tokens = markdownParser.lexer(normalizeMarkdown(input))
+  collectFootnoteDefinitions(markdownParser, tokens, context.footnotes)
 
-  // 2. 解析脚注
-  const { text: textWithoutFootnotes, footnotes } = parseFootnotes(text)
-  text = textWithoutFootnotes
+  // 2. 输出 HTML 并处理时间标记
+  let html = renderTimelineTokens(markdownParser.parser(tokens))
 
-  // 3. 抽取结构化表达组件，主体和组件内容共用同一套渲染管线
-  const { text: textWithPlaceholders, blocks } = extractExpressionBlocks(text)
-
-  // 4. 渲染主体 Markdown
-  let html = await renderMarkdownFragment(textWithPlaceholders)
-
-  // 5. 渲染脚注引用
-  html = renderFootnoteRefs(html, footnotes)
-
-  // 6. 渲染结构化表达组件
-  const renderedBlocks = await Promise.all(
-    blocks.map(async (block) => {
-      const bodyHtml = renderFootnoteRefs(await renderMarkdownFragment(block.content), footnotes)
-      return {
-        placeholder: block.placeholder,
-        html: buildExpressionBlockHtml(block, bodyHtml),
-      }
-    })
-  )
-  html = replaceExpressionBlockPlaceholders(html, renderedBlocks)
-
-  // 7. 生成目录
-  let toc = null
+  // 3. 生成目录
   if (includeTOC) {
-    toc = generateTOC(html)
+    const toc = generateTOC(html)
     if (toc) {
       html = addHeadingIds(html, toc.headings)
       html = toc.html + html
     }
   }
 
-  // 8. 添加脚注列表
-  html += buildFootnoteList(footnotes)
+  // 4. 添加脚注列表
+  html += buildFootnoteList(context.footnotes)
 
-  // 9. 安全过滤
+  // 5. 安全过滤正文，再填入单独过滤的图表
   const sanitized = DOMPurify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
   })
 
-  return sanitized
-}
-
-// 同步版本（用于非异步场景）
-export function renderMarkdownSync(input, options = {}) {
-  const { includeTOC = false, codeTheme = 'github', darkMode = false } = options
-
-  // 1. 预处理 Markdown
-  let text = normalizeMarkdown(input)
-
-  // 2. 解析脚注
-  const { text: textWithoutFootnotes, footnotes } = parseFootnotes(text)
-  text = textWithoutFootnotes
-
-  // 3. 抽取结构化表达组件
-  const { text: textWithPlaceholders, blocks } = extractExpressionBlocks(text)
-
-  // 4. 渲染主体 Markdown（同步版本跳过 Mermaid）
-  let html = renderMarkdownFragmentSync(textWithPlaceholders)
-
-  // 5. 渲染脚注引用
-  html = renderFootnoteRefs(html, footnotes)
-
-  // 6. 渲染结构化表达组件
-  const renderedBlocks = blocks.map((block) => {
-    const bodyHtml = renderFootnoteRefs(renderMarkdownFragmentSync(block.content), footnotes)
-    return {
-      placeholder: block.placeholder,
-      html: buildExpressionBlockHtml(block, bodyHtml),
-    }
-  })
-  html = replaceExpressionBlockPlaceholders(html, renderedBlocks)
-
-  // 7. 生成目录
-  let toc = null
-  if (includeTOC) {
-    toc = generateTOC(html)
-    if (toc) {
-      html = addHeadingIds(html, toc.headings)
-      html = toc.html + html
-    }
-  }
-
-  // 8. 添加脚注列表
-  html += buildFootnoteList(footnotes)
-
-  // 9. 安全过滤
-  const sanitized = DOMPurify.sanitize(html, {
-    ALLOWED_TAGS,
-    ALLOWED_ATTR,
-  })
-
-  return sanitized
+  return injectMermaidCharts(sanitized, context.mermaidCharts)
 }

@@ -23,6 +23,8 @@ import 'katex/dist/katex.min.css'
 
 const STORAGE_KEY = 'format-hub.markdown'
 const CONTENT_MAX_WIDTH_STORAGE_KEY = 'format-hub.contentMaxWidth'
+// 连续输入时只渲染停顿后的内容，避免图表渲染任务随按键堆积。
+const RENDER_DEBOUNCE_MS = 120
 
 function sanitizePositiveIntegerInput(value) {
   return value.replace(/[^\d]/g, '')
@@ -174,7 +176,8 @@ export default function App() {
   const [isWechatExporting, setIsWechatExporting] = useState(false)
   const [wechatExportError, setWechatExportError] = useState('')
   const [renderResult, setRenderResult] = useState({ key: null, html: '', error: '' })
-  const renderKey = JSON.stringify([markdown, showTOC, codeTheme, isDarkCode])
+  // 代码主题只影响样式表，不需要重新渲染 Markdown。
+  const renderKey = JSON.stringify([markdown, showTOC])
   const renderedHtml = renderResult.html
   const isRenderReady = renderResult.key === renderKey && !renderResult.error
   const hasRenderError = renderResult.key === renderKey && Boolean(renderResult.error)
@@ -280,19 +283,18 @@ export default function App() {
   // 异步渲染 Markdown
   useEffect(() => {
     let cancelled = false
-    renderMarkdown(markdown, {
-      includeTOC: showTOC,
-      codeTheme,
-      darkMode: isDarkCode,
-    }).then((html) => {
-      if (!cancelled) setRenderResult({ key: renderKey, html, error: '' })
-    }).catch(() => {
-      if (!cancelled) setRenderResult({ key: renderKey, html: '', error: '内容渲染失败，请检查 Markdown 后重试。' })
-    })
+    const timer = window.setTimeout(() => {
+      renderMarkdown(markdown, { includeTOC: showTOC }).then((html) => {
+        if (!cancelled) setRenderResult({ key: renderKey, html, error: '' })
+      }).catch(() => {
+        if (!cancelled) setRenderResult({ key: renderKey, html: '', error: '内容渲染失败，请检查 Markdown 后重试。' })
+      })
+    }, RENDER_DEBOUNCE_MS)
     return () => {
       cancelled = true
+      window.clearTimeout(timer)
     }
-  }, [markdown, showTOC, codeTheme, isDarkCode, renderKey])
+  }, [markdown, showTOC, renderKey])
 
   const standaloneHtml = useMemo(
     () =>

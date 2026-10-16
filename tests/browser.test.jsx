@@ -2,7 +2,7 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import mermaid from 'mermaid'
 import katex from 'katex'
-import { renderMarkdown, renderMarkdownSync } from '../src/core/markdown'
+import { renderMarkdown } from '../src/core/markdown'
 import { buildRichClipboardPayload, normalizeTextAlign } from '../src/core/clipboard'
 import { buildHtmlDocument, themes, themeGroups } from '../src/themes'
 import App from '../src/App'
@@ -129,14 +129,65 @@ window.testResults = (async () => {
       assert(!doc.querySelector('code .katex, code mark, code .timeline-token'), '代码内误触发扩展')
     }
   })
-  await test('正文和表达组件仍支持高亮与公式，同步异步输出一致', async () => {
+  await test('正文和表达组件仍支持高亮与公式', async () => {
     const input = '==**重点**== 和 $E=mc^2$\n\n$$\nx^2\n$$\n\n:::note 提示\n==内容== $y$\n:::'
-    const html = await renderMarkdown(input)
-    const doc = parse(html)
+    const doc = parse(await renderMarkdown(input))
     assert(doc.querySelectorAll('mark').length === 2, '高亮丢失')
     assert(doc.querySelectorAll('.katex').length === 3, '公式丢失')
     assert(doc.querySelector('.katex-display'), '块级公式显示模式错误')
-    assert(html === renderMarkdownSync(input), '同步异步输出不一致')
+    assert(doc.querySelector('.content-block-note .katex'), '表达组件内公式丢失')
+  })
+  await test('超过十个表达组件时内容和顺序不错位', async () => {
+    const input = Array.from({ length: 12 }, (_, index) => `:::note 标题${index}\n内容${index}\n:::`).join('\n\n')
+    const doc = parse(await renderMarkdown(input))
+    const titles = [...doc.querySelectorAll('.content-block-title')].map(node => node.textContent)
+    const bodies = [...doc.querySelectorAll('.content-block-body')].map(node => node.textContent.trim())
+    assert(titles.join() === Array.from({ length: 12 }, (_, index) => `标题${index}`).join(), `组件标题错位：${titles.join()}`)
+    assert(bodies.join() === Array.from({ length: 12 }, (_, index) => `内容${index}`).join(), `组件内容错位：${bodies.join()}`)
+  })
+  await test('表达组件内的美元替换符原样保留', async () => {
+    const code = "echo $$ $& $' $` $1 done"
+    const doc = parse(await renderMarkdown(':::steps 步骤\n```bash\n' + code + '\n```\n\n行内 `` ' + code + ' ``\n:::'))
+    const codes = [...doc.querySelectorAll('.content-block code')].map(node => node.textContent.trim())
+    assert(codes.length === 2 && codes.every(text => text === code), `组件内代码被改写：${codes.join(' | ')}`)
+  })
+  await test('表达组件紧跟段落或列表时仍能开启', async () => {
+    for (const input of ['前文段落\n:::note 提示\n组件内容\n:::', '- 列表项\n:::note 提示\n组件内容\n:::']) {
+      const doc = parse(await renderMarkdown(input))
+      assert(doc.querySelector('.content-block-note .content-block-body')?.textContent.trim() === '组件内容', `未开启组件：${input}`)
+      assert(!doc.body.textContent.includes(':::'), `组件标记残留：${input}`)
+    }
+  })
+  await test('代码中的脚注语法原样保留，脚注定义可紧跟段落', async () => {
+    const doc = parse(await renderMarkdown('正文引用[^a]和未定义[^none]\n[^a]: 脚注 **加粗**\n\n语法 `[^a]`\n\n```md\n正文[^a]\n[^a]: 定义\n```'))
+    assert(doc.querySelector('p code').textContent === '[^a]', '行内代码中的脚注被改写')
+    assert(doc.querySelector('pre code').textContent === '正文[^a]\n[^a]: 定义', '代码块中的脚注被改写')
+    assert(doc.querySelectorAll('sup a[href="#footnote-a"]').length === 1, '正文脚注引用缺失')
+    assert(doc.body.textContent.includes('未定义[^none]'), '未定义脚注应原样显示')
+    assert(doc.querySelector('.footnotes li strong')?.textContent === '加粗', '脚注内容未按 Markdown 渲染')
+    assert(!doc.querySelector('p:first-child')?.textContent.includes('脚注 加粗'), '脚注定义混入正文')
+  })
+  await test('嵌套围栏中的 mermaid 示例按代码显示', async () => {
+    const inner = '```mermaid\ngraph TD\n  A-->B\n```'
+    const doc = parse(await renderMarkdown('````markdown\n' + inner + '\n````'))
+    assert(!doc.querySelector('.mermaid-chart'), '示例代码被渲染成图表')
+    assert(doc.querySelector('code').textContent === inner, '示例代码被改写')
+  })
+  await test('美元金额不误判为公式，常规公式照常渲染', async () => {
+    const money = parse(await renderMarkdown('门票 $5 起，套票 $10 封顶；价格$5和$10。'))
+    assert(money.querySelectorAll('.katex').length === 0, '美元金额被渲染成公式')
+    assert(money.body.textContent.includes('门票 $5 起，套票 $10 封顶；价格$5和$10。'), '金额文字被改写')
+    const math = parse(await renderMarkdown('公式 $x$、$E=mc^2$ 与 $\\sqrt{2}$。'))
+    assert(math.querySelectorAll('.katex').length === 3, '常规行内公式丢失')
+  })
+  await test('Mermaid 图表保留文字、箭头和样式', async () => {
+    const doc = parse(await renderMarkdown('```mermaid\ngraph TD\n  A[开始] --> B[结束]\n```'))
+    const svg = doc.querySelector('.mermaid-chart svg')
+    assert(svg, '图表缺失')
+    assert(svg.textContent.includes('开始') && svg.textContent.includes('结束'), '节点文字丢失')
+    assert(svg.querySelector('marker[refX], marker[refx]'), '箭头定义丢失')
+    assert(svg.querySelector('style'), '图表样式丢失')
+    assert(!svg.querySelector('foreignObject, foreignobject'), '标签不应依赖 foreignObject')
   })
   await test('KaTeX 可伸缩符号在过滤后保留全部属性', async () => {
     const attributes = (root) => new Set([...root.querySelectorAll('*')].flatMap(element => [...element.attributes].map(attribute => `${element.localName}@${attribute.name}=${attribute.value}`)))
